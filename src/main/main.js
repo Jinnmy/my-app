@@ -7,28 +7,40 @@ if (require('electron-squirrel-startup')) {
   app.quit();
 }
 
+const fs = require('fs');
+
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 1000,
+    height: 800,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false, // Security best practice
+      contextIsolation: true
     },
+    autoHideMenuBar: true // Make it look more like an app
   });
 
-  // and load the index.html of the app.
-  mainWindow.loadFile(path.join(__dirname, '../ui/admin/index.html'));
+  const configPath = path.join(__dirname, '../server/config/storage.json');
+
+  if (fs.existsSync(configPath)) {
+    // Setup complete, load the dashboard
+    mainWindow.loadURL('http://localhost:3000/');
+  } else {
+    // No config found, load the setup wizard
+    mainWindow.loadURL('http://localhost:3000/setup.html');
+  }
 
   // Open the DevTools.
-  mainWindow.webContents.openDevTools();
+  // mainWindow.webContents.openDevTools();
 };
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
-  startServer(); // Start the Express server
+  startServer(app); // Start the Express server with Electron app instance
   createWindow();
 
   // On OS X it's common to re-create a window in the app when the
