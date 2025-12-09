@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -50,8 +51,15 @@
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .form-group {
@@ -64,7 +72,8 @@
             color: var(--text-muted);
         }
 
-        input, select {
+        input,
+        select {
             width: 100%;
             padding: 0.75rem;
             border-radius: 0.5rem;
@@ -75,7 +84,8 @@
             box-sizing: border-box;
         }
 
-        input:focus, select:focus {
+        input:focus,
+        select:focus {
             outline: 2px solid var(--primary);
             border-color: transparent;
         }
@@ -140,163 +150,283 @@
         }
     </style>
 </head>
+
 <body>
 
-<div class="wizard-container">
-    <h1>NAS Setup</h1>
-    
-    <!-- Step 1: Disk Selection -->
-    <div id="step1" class="step active">
-        <h2>Select Storage Disks</h2>
-        <p class="text-muted">Choose the drives you want to use for storage.</p>
-        <div id="diskList" class="disk-list">
-            <!-- Disks will be injected here -->
-            <div class="disk-card">Loading disks...</div>
+    <div class="wizard-container">
+        <h1>NAS Setup</h1>
+
+        <!-- Step 1: Disk Selection -->
+        <div id="step1" class="step active">
+            <h2>Select Storage Disks</h2>
+            <p class="text-muted">Choose the drives you want to use for storage.</p>
+            <div id="diskList" class="disk-list">
+                <!-- Disks will be injected here -->
+                <div class="disk-card">Loading disks...</div>
+            </div>
+            <button class="btn" onclick="nextStep(2)" style="margin-top: 1.5rem;">Next</button>
         </div>
-        <button class="btn" onclick="nextStep(2)" style="margin-top: 1.5rem;">Next</button>
+
+        <!-- Step 2: RAID Configuration -->
+        <div id="step2" class="step">
+            <h2>RAID Configuration</h2>
+            <p class="text-muted">Select your data protection level.</p>
+            <div class="form-group">
+                <label>RAID Level</label>
+                <select id="raidLevel">
+                    <option value="0">RAID 0 (Striping) - Fast, No Redundancy</option>
+                    <option value="1">RAID 1 (Mirroring) - Safe, 50% Capacity</option>
+                    <option value="5">RAID 5 (Parity) - Balanced (Requires 3+ disks)</option>
+                    <option value="JBOD">JBOD (Just a Bunch of Disks)</option>
+                </select>
+            </div>
+            <button class="btn" onclick="nextStep(3)">Next</button>
+            <button class="btn btn-secondary" onclick="nextStep(1)">Back</button>
+        </div>
+
+        <!-- Step 3: Admin Account -->
+        <div id="step3" class="step">
+            <h2>Create Admin Account</h2>
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="username" placeholder="admin">
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="email" placeholder="admin@example.com">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="password" placeholder="••••••••">
+            </div>
+            <button class="btn" onclick="nextStep(4)">Next</button>
+            <button class="btn btn-secondary" onclick="nextStep(2)">Back</button>
+        </div>
+
+        <!-- Step 4: Startup Permission -->
+        <div id="step4" class="step">
+            <h2>Final Setup</h2>
+            <p>Do you want this NAS application to start automatically when Windows starts?</p>
+            <div class="form-group">
+                <label class="disk-card" style="cursor: pointer;">
+                    <input type="checkbox" id="startupCheck" checked style="width: auto; margin-right: 1rem;">
+                    <span>Start on Windows Startup</span>
+                </label>
+            </div>
+            <button class="btn" onclick="finishSetup()">Finish Setup</button>
+            <button class="btn btn-secondary" onclick="nextStep(3)">Back</button>
+        </div>
     </div>
 
-    <!-- Step 2: RAID Configuration -->
-    <div id="step2" class="step">
-        <h2>RAID Configuration</h2>
-        <p class="text-muted">Select your data protection level.</p>
-        <div class="form-group">
-            <label>RAID Level</label>
-            <select id="raidLevel">
-                <option value="0">RAID 0 (Striping) - Fast, No Redundancy</option>
-                <option value="1">RAID 1 (Mirroring) - Safe, 50% Capacity</option>
-                <option value="5">RAID 5 (Parity) - Balanced (Requires 3+ disks)</option>
-                <option value="JBOD">JBOD (Just a Bunch of Disks)</option>
-            </select>
-        </div>
-        <button class="btn" onclick="nextStep(3)">Next</button>
-        <button class="btn btn-secondary" onclick="nextStep(1)">Back</button>
-    </div>
+    <script>
+        let selectedDisks = [];
+        let currentStep = 1;
+        let isExistingDiskMode = false;
 
-    <!-- Step 3: Admin Account -->
-    <div id="step3" class="step">
-        <h2>Create Admin Account</h2>
-        <div class="form-group">
-            <label>Username</label>
-            <input type="text" id="username" placeholder="admin">
-        </div>
-        <div class="form-group">
-            <label>Email</label>
-            <input type="email" id="email" placeholder="admin@example.com">
-        </div>
-        <div class="form-group">
-            <label>Password</label>
-            <input type="password" id="password" placeholder="••••••••">
-        </div>
-        <button class="btn" onclick="nextStep(4)">Next</button>
-        <button class="btn btn-secondary" onclick="nextStep(2)">Back</button>
-    </div>
+        async function fetchDisks() {
+            try {
+                const res = await fetch('/api/system/disks');
+                const disks = await res.json();
+                const container = document.getElementById('diskList');
+                container.innerHTML = '';
 
-    <!-- Step 4: Startup Permission -->
-    <div id="step4" class="step">
-        <h2>Final Setup</h2>
-        <p>Do you want this NAS application to start automatically when Windows starts?</p>
-        <div class="form-group">
-            <label class="disk-card" style="cursor: pointer;">
-                <input type="checkbox" id="startupCheck" checked style="width: auto; margin-right: 1rem;">
-                <span>Start on Windows Startup</span>
-            </label>
-        </div>
-        <button class="btn" onclick="finishSetup()">Finish Setup</button>
-        <button class="btn btn-secondary" onclick="nextStep(3)">Back</button>
-    </div>
-</div>
+                let availableCount = 0;
 
-<script>
-    let selectedDisks = [];
-    let currentStep = 1;
+                disks.forEach(disk => {
+                    const div = document.createElement('div');
+                    div.className = 'disk-card';
 
-    async function fetchDisks() {
-        try {
-            const res = await fetch('/api/system/disks');
-            const disks = await res.json();
-            const container = document.getElementById('diskList');
-            container.innerHTML = '';
-            
-            disks.forEach(disk => {
-                const div = document.createElement('div');
-                div.className = 'disk-card';
-                div.onclick = () => toggleDisk(div, disk.device);
-                div.innerHTML = `
+                    const isPoolable = disk.canPool;
+                    const isBoot = disk.isBoot;
+
+                    if (!isBoot) availableCount++;
+
+                    if (isBoot) {
+                        div.style.opacity = '0.5';
+                        div.style.cursor = 'not-allowed';
+                        div.title = 'System Boot Disk (Cannot be used)';
+                    } else {
+                        div.onclick = () => toggleDisk(div, disk.device, isPoolable);
+                    }
+
+                    let statusHtml = '';
+                    if (isBoot) statusHtml = '<span style="color:#f87171">System Disk</span>';
+                    else if (isPoolable) statusHtml = '<span style="color:#4ade80">Available</span>';
+                    else statusHtml = '<span style="color:#fbbf24">Existing Data</span>';
+
+                    div.innerHTML = `
                     <div class="disk-info">
                         <h3>${disk.name || 'Unknown Disk'} (${disk.device})</h3>
-                        <p>Size: ${(disk.size / 1073741824).toFixed(2)} GB | Free: ${(disk.freeSpace / 1073741824).toFixed(2)} GB</p>
+                        <p>Size: ${(disk.size / 1073741824).toFixed(2)} GB | Status: ${statusHtml}</p>
                     </div>
                 `;
-                container.appendChild(div);
-            });
-        } catch (e) {
-            document.getElementById('diskList').innerHTML = '<p style="color:red">Failed to load disks.</p>';
-        }
-    }
+                    container.appendChild(div);
+                });
 
-    function toggleDisk(el, device) {
-        el.classList.toggle('selected');
-        if (selectedDisks.includes(device)) {
-            selectedDisks = selectedDisks.filter(d => d !== device);
-        } else {
-            selectedDisks.push(device);
-        }
-    }
+                if (availableCount === 0) {
+                    const warning = document.createElement('div');
+                    warning.style.color = '#f87171';
+                    warning.style.marginTop = '1rem';
+                    warning.innerHTML = 'No available disks found.';
+                    container.appendChild(warning);
+                }
 
-    function nextStep(step) {
-        document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
-        document.getElementById('step' + step).classList.add('active');
-        currentStep = step;
-    }
-
-    async function finishSetup() {
-        const username = document.getElementById('username').value;
-        const email = document.getElementById('email').value;
-        const password = document.getElementById('password').value;
-        const raid = document.getElementById('raidLevel').value;
-        const startup = document.getElementById('startupCheck').checked;
-
-        if (!username || !email || !password) {
-            alert('Please fill in all admin fields');
-            nextStep(3);
-            return;
+            } catch (e) {
+                console.error(e);
+                document.getElementById('diskList').innerHTML = '<p style="color:red">Failed to load disks.</p>';
+            }
         }
 
-        try {
-            // 1. Save Storage
-            await fetch('/api/system/storage', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ disks: selectedDisks, raidLevel: raid })
-            });
+        function toggleDisk(el, device, isPoolable) {
+            // If we are selecting a disk that is NOT poolable (existing data), we enforce single selection
+            if (!isPoolable) {
+                if (selectedDisks.includes(device)) {
+                    selectedDisks = [];
+                    el.classList.remove('selected');
+                    isExistingDiskMode = false;
+                } else {
+                    // Deselect all others
+                    document.querySelectorAll('.disk-card').forEach(c => c.classList.remove('selected'));
+                    selectedDisks = [device];
+                    el.classList.add('selected');
+                    isExistingDiskMode = true;
+                }
+            } else {
+                // Normal poolable disk selection
+                if (isExistingDiskMode) {
+                    // If switching from existing mode, clear everything first
+                    document.querySelectorAll('.disk-card').forEach(c => c.classList.remove('selected'));
+                    selectedDisks = [];
+                    isExistingDiskMode = false;
+                }
 
-            // 2. Create Admin
-            const userRes = await fetch('/api/users', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, email, password, role: 'admin' })
-            });
-            
-            if (!userRes.ok) throw new Error('Failed to create admin');
-
-            // 3. Set Startup
-            await fetch('/api/system/startup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enable: startup })
-            });
-
-            alert('Setup Complete! Redirecting...');
-            window.location.href = '/'; // Go to dashboard
-        } catch (err) {
-            alert('Error during setup: ' + err.message);
+                el.classList.toggle('selected');
+                if (selectedDisks.includes(device)) {
+                    selectedDisks = selectedDisks.filter(d => d !== device);
+                } else {
+                    selectedDisks.push(device);
+                }
+            }
         }
-    }
 
-    // Load disks on start
-    fetchDisks();
-</script>
+        function nextStep(step) {
+            if (step === 2) {
+                if (selectedDisks.length === 0) {
+                    alert('Please select at least one disk.');
+                    return;
+                }
+
+                if (isExistingDiskMode) {
+                    // Skip RAID setup for existing disks
+                    nextStep(3);
+                    return;
+                }
+
+                updateRaidOptions();
+            }
+            document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+            document.getElementById('step' + step).classList.add('active');
+            currentStep = step;
+        }
+
+        async function finishSetup() {
+            const username = document.getElementById('username').value;
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            // If existing mode, use 'existing', otherwise get from select
+            const raid = isExistingDiskMode ? 'existing' : document.getElementById('raidLevel').value;
+            const startup = document.getElementById('startupCheck').checked;
+
+            if (!username || !email || !password) {
+                alert('Please fill in all admin fields');
+                nextStep(3);
+                return;
+            }
+
+            let confirmMsg = "WARNING: This operation will ERASE ALL DATA on the selected disks and create new partitions. This cannot be undone.\n\nAre you sure you want to proceed?";
+            if (isExistingDiskMode) {
+                confirmMsg = "You have selected to use an existing disk. The application will attempt to use the existing volume on this disk. No data will be erased, but please ensure this is the correct disk.\n\nProceed?";
+            }
+
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            try {
+                // 1. Save Storage
+                const storageRes = await fetch('/api/system/storage', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ disks: selectedDisks, raidLevel: raid })
+                });
+
+                if (!storageRes.ok) {
+                    const errData = await storageRes.json();
+                    throw new Error(errData.error || 'Failed to configure storage');
+                }
+
+                // 2. Create Admin
+                const userRes = await fetch('/api/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, password, role: 'admin' })
+                });
+
+                if (!userRes.ok) throw new Error('Failed to create admin');
+
+                // 3. Set Startup
+                await fetch('/api/system/startup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enable: startup })
+                });
+
+                alert('Setup Complete! Redirecting...');
+                window.location.href = '/'; // Go to dashboard
+            } catch (err) {
+                alert('Error during setup: ' + err.message);
+            }
+        }
+
+        // Load disks on start
+        function updateRaidOptions() {
+            const raidSelect = document.getElementById('raidLevel');
+            const count = selectedDisks.length;
+
+            Array.from(raidSelect.options).forEach(opt => {
+                const val = opt.value;
+                let enabled = false;
+
+                if (val === 'JBOD') enabled = count >= 1;
+                else if (val === '0') enabled = count >= 2;
+                else if (val === '1') enabled = count >= 2;
+                else if (val === '5') enabled = count >= 3;
+
+                opt.disabled = !enabled;
+                if (!enabled) {
+                    if (!opt.innerText.includes('(Unavailable)')) {
+                        opt.innerText += ' (Unavailable)';
+                    }
+                } else {
+                    opt.innerText = opt.innerText.replace(' (Unavailable)', '');
+                }
+            });
+
+            const currentOption = raidSelect.options[raidSelect.selectedIndex];
+            if (currentOption && currentOption.disabled) {
+                for (let opt of raidSelect.options) {
+                    if (!opt.disabled) {
+                        raidSelect.value = opt.value;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Call fetchDisks immediately as the script is at the end of the body
+        fetchDisks();
+    </script>
 
 </body>
+
 </html>
