@@ -182,7 +182,7 @@ const systemController = {
                         try {
                             $diskId = "${diskId}"
                             # Find partition with a drive letter on this disk
-                            $partition = Get-Partition -DiskNumber $diskId | Where-Object DriveLetter -ne $null | Select-Object -First 1
+                            $partition = Get-Partition -DiskNumber $diskId | Where-Object { $_.DriveLetter -ne 0 -and $_.DriveLetter -ne $null } | Select-Object -First 1
                             
                             if ($partition) {
                                 Write-Host "VOLUME_PATH: $($partition.DriveLetter):\"
@@ -283,9 +283,9 @@ const systemController = {
                 console.log("Storage Setup Output:", output);
 
                 // Parse volume path
-                const match = output.match(/VOLUME_PATH:\s*([A-Z]:\\)/);
+                const match = output.match(/VOLUME_PATH:\s*([A-Z]:\\?)/);
                 if (match && match[1]) {
-                    req.body.volumePath = match[1];
+                    req.body.volumePath = match[1].endsWith('\\') ? match[1] : match[1] + '\\';
                     console.log(`Detected Volume Path: ${req.body.volumePath}`);
                 } else {
                     console.warn("Could not detect volume path from PowerShell output.");
