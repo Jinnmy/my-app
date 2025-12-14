@@ -11,10 +11,16 @@ const systemRoutes = require('./routes/systemRoutes');
 const { setElectronApp } = require('./controllers/systemController');
 const userRoutes = require('./routes/userRoutes');
 const fileRoutes = require('./routes/fileRoutes');
+const transferRoutes = require('./routes/transferRoutes');
+const TransferService = require('./services/transferService');
 
 app.use('/api/users', userRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/files', fileRoutes);
+app.use('/api/transfers', transferRoutes);
+
+// Start the transfer background worker
+TransferService.start();
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '../ui/public/index.html'));

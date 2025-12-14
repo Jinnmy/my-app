@@ -58,16 +58,14 @@ class FileModel {
         });
     }
 
-    static findByParentId(parentId, callback) {
-        const sql = `SELECT * FROM files WHERE parent_id = ?`;
-        const params = parentId ? [parentId] : [null]; // If parentId is null, we might need IS NULL check, but standard SQL usually needs IS NULL.
+    static findByParentId(userId, parentId, callback) {
+        const sql = parentId
+            ? `SELECT * FROM files WHERE user_id = ? AND parent_id = ?`
+            : `SELECT * FROM files WHERE user_id = ? AND parent_id IS NULL`;
 
-        // SQLite handles NULL in equality checks differently usually, let's handle root (null parent) separately or use IS
-        const query = parentId
-            ? `SELECT * FROM files WHERE parent_id = ?`
-            : `SELECT * FROM files WHERE parent_id IS NULL`;
+        const params = parentId ? [userId, parentId] : [userId];
 
-        db.all(query, parentId ? [parentId] : [], (err, rows) => {
+        db.all(sql, params, (err, rows) => {
             callback(err, rows);
         });
     }
@@ -75,6 +73,34 @@ class FileModel {
     static findAll(callback) {
         const sql = `SELECT * FROM files`;
         db.all(sql, [], (err, rows) => {
+            callback(err, rows);
+        });
+    }
+
+    static updateParent(id, parentId, callback) {
+        const sql = `UPDATE files SET parent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+        db.run(sql, [parentId, id], function (err) {
+            callback(err);
+        });
+    }
+
+    static updateLocation(id, parentId, path, callback) {
+        const sql = `UPDATE files SET parent_id = ?, path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+        db.run(sql, [parentId, path, id], function (err) {
+            callback(err);
+        });
+    }
+
+    static search(userId, query, type, callback) {
+        let sql = `SELECT * FROM files WHERE user_id = ? AND name LIKE ?`;
+        const params = [userId, `%${query}%`];
+
+        if (type) {
+            sql += ` AND type = ?`;
+            params.push(type);
+        }
+
+        db.all(sql, params, (err, rows) => {
             callback(err, rows);
         });
     }

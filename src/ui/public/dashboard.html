@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - NAS Portal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="dashboard-layout">
+        <aside class="sidebar" id="sidebar-container">
+            <!-- Sidebar will be loaded here -->
+        </aside>
+
+        <main class="main-content">
+            <header class="topbar" id="topbar-container">
+                <!-- Topbar will be loaded here -->
+            </header>
+
+            <div class="content-area" id="main-content-area">
+                <!-- Page content will be loaded here -->
+            </div>
+        </main>
+    </div>
+    <script src="app.js"></script>
+    <script src="js/files.js"></script>
+    <script>
+        // Inline script to enforce auth check on dashboard immediately
+        const token = localStorage.getItem('token');
+        if (!token) {
+            window.location.href = 'index.html';
+        }
+
+        // Router logic is handled in app.js
+    </script>
+</body>
+
+</html>
