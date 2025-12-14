@@ -53,4 +53,9 @@ router.put('/move/:id', verifyToken, FileController.move);
 router.delete('/:id', verifyToken, FileController.delete);
 router.get('/stream/:id', verifyToken, FileController.stream);
 
+// Share routes
+router.post('/:id/share', verifyToken, FileController.share);
+router.post('/:id/unshare', verifyToken, FileController.unshare);
+router.get('/:id/shared-users', verifyToken, FileController.getSharedUsers);
+
 module.exports = router;

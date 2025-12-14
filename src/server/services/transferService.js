@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const TransferModel = require('../models/transferModel');
 const FileModel = require('../models/fileModel');
+const UserModel = require('../models/userModel');
 
 const CONCURRENCY_LIMIT = 2; // Simultaneous transfers
 
@@ -112,6 +113,12 @@ class TransferService {
                 if (err) {
                     return TransferModel.updateStatus(id, 'failed', 'File saved but DB update failed: ' + err.message);
                 }
+
+                // Update User Storage
+                UserModel.updateStorage(user_id, metadata.size, (err) => {
+                    if (err) console.error('Failed to update storage usage on upload:', err);
+                });
+
                 TransferModel.updateStatus(id, 'completed');
             });
         });

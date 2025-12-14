@@ -13,6 +13,8 @@ async function initFilesPage() {
     setupContextMenu();
     setupMoveModal();
     setupMoveModal();
+    setupMoveModal();
+    setupShareModal();
     setupVideoModal();
     setupTransferPanel();
     startTransferPolling();
@@ -71,6 +73,7 @@ function renderFiles(files) {
         // Determine File Type
         const isImage = file.type === 'file' && /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
         const isVideo = file.type === 'file' && /\.(mp4|webm|ogg|mkv)$/i.test(file.name);
+        const isDocx = file.type === 'file' && file.name.toLowerCase().endsWith('.docx');
 
         // Define Icon
         let icon = '';
@@ -123,6 +126,13 @@ function renderFiles(files) {
         if (isVideo) {
             fileCard.addEventListener('dblclick', () => {
                 playVideo(file.id, file.name);
+            });
+        }
+
+        // Word Editor
+        if (isDocx) {
+            fileCard.addEventListener('dblclick', () => {
+                editFile(file.id);
             });
         }
 
@@ -304,6 +314,8 @@ function setupContextMenu() {
     const deleteBtn = document.getElementById('ctx-delete');
     const downloadBtn = document.getElementById('ctx-download');
     const moveBtn = document.getElementById('ctx-move');
+    const editBtn = document.getElementById('ctx-edit');
+    const shareBtn = document.getElementById('ctx-share');
 
     // Context Menu Trigger
     fileGrid.addEventListener('contextmenu', (e) => {
@@ -348,11 +360,31 @@ function setupContextMenu() {
             }
         };
     }
+
+    if (editBtn) {
+        editBtn.onclick = () => {
+            if (contextMenuFileId) {
+                editFile(contextMenuFileId);
+                contextMenu.style.display = 'none';
+            }
+        };
+    }
+
+    if (shareBtn) {
+        shareBtn.onclick = () => {
+            if (contextMenuFileId) {
+                openShareModal(contextMenuFileId);
+                contextMenu.style.display = 'none';
+            }
+        };
+    }
 }
 
 function showContextMenu(x, y, id, type, name) {
     const contextMenu = document.getElementById('context-menu');
     const downloadBtn = document.getElementById('ctx-download');
+    const editBtn = document.getElementById('ctx-edit');
+    const shareBtn = document.getElementById('ctx-share');
 
     contextMenuFileId = id;
     contextMenuFileType = type;
@@ -365,8 +397,17 @@ function showContextMenu(x, y, id, type, name) {
     // Toggle Download for folders
     if (type === 'folder') {
         downloadBtn.style.display = 'none';
+        if (editBtn) editBtn.style.display = 'none';
     } else {
         downloadBtn.style.display = 'flex';
+        // Show edit if .docx
+        if (editBtn) {
+            if (name.toLowerCase().endsWith('.docx')) {
+                editBtn.style.display = 'flex';
+            } else {
+                editBtn.style.display = 'none';
+            }
+        }
     }
 }
 
@@ -381,6 +422,7 @@ async function deleteFile(id) {
 
         if (response.ok) {
             loadFiles(currentParentId);
+            if (window.updateUserData) window.updateUserData();
         } else {
             console.error('Delete failed');
             alert('Failed to delete item');
@@ -630,6 +672,123 @@ async function moveFile(fileId, targetParentId) {
     }
 }
 
+// --- Share Modal & Logic ---
+
+let shareFileId = null;
+
+function setupShareModal() {
+    const modal = document.getElementById('share-modal');
+    const closeBtn = document.getElementById('close-share-modal');
+    const addShareBtn = document.getElementById('btn-add-share');
+    const emailInput = document.getElementById('share-email-input');
+
+    const closeModal = () => modal.style.display = 'none';
+
+    if (closeBtn) closeBtn.onclick = closeModal;
+    window.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+
+    if (addShareBtn) {
+        addShareBtn.onclick = async () => {
+            const email = emailInput.value;
+            if (!email) return;
+
+            try {
+                const response = await fetch(`/api/files/${shareFileId}/share`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    },
+                    body: JSON.stringify({ targetBy: 'email', value: email, permission: 'view' })
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    emailInput.value = '';
+                    loadSharedUsers(shareFileId);
+                } else {
+                    alert(data.error || 'Share failed');
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Share error');
+            }
+        };
+    }
+}
+
+async function openShareModal(id) {
+    shareFileId = id;
+    const modal = document.getElementById('share-modal');
+    if (modal) {
+        modal.style.display = 'block';
+        loadSharedUsers(id);
+    }
+}
+
+async function loadSharedUsers(fileId) {
+    const list = document.getElementById('shared-users-list');
+    list.innerHTML = '<p style="padding: 10px; color: #888;">Loading...</p>';
+
+    try {
+        const response = await fetch(`/api/files/${fileId}/shared-users`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        const users = await response.json();
+
+        list.innerHTML = '';
+        if (users.length === 0) {
+            list.innerHTML = '<p style="padding: 10px; color: #888;">No users yet</p>';
+        } else {
+            users.forEach(user => {
+                const div = document.createElement('div');
+                div.style.display = 'flex';
+                div.style.justifyContent = 'space-between';
+                div.style.alignItems = 'center';
+                div.style.padding = '8px';
+                div.style.borderBottom = '1px solid #333';
+
+                div.innerHTML = `
+                    <div>
+                        <div style="font-weight: bold;">${user.username}</div>
+                        <small style="color: #666;">${user.email}</small>
+                    </div>
+                    <button class="btn-text" style="color: #ff4d4d; font-size: 0.9em;" onclick="unshareFile('${fileId}', '${user.id}')">Remove</button>
+                `;
+                list.appendChild(div);
+            });
+        }
+    } catch (e) {
+        console.error(e);
+        list.innerHTML = '<p style="padding: 10px; color: red;">Failed to load data</p>';
+    }
+}
+
+window.unshareFile = async (fileId, userId) => {
+    if (!confirm('Revoke access for this user?')) return;
+
+    try {
+        const response = await fetch(`/api/files/${fileId}/unshare`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ targetUserId: userId })
+        });
+
+        if (response.ok) {
+            loadSharedUsers(fileId);
+        } else {
+            alert('Failed to revoke access');
+        }
+    } catch (e) {
+        console.error(e);
+    }
+};
+
 // Breadcrumb DnD Handlers
 function handleBreadcrumbDragOver(e) {
     e.preventDefault();
@@ -775,6 +934,7 @@ function renderTransfers(transfers) {
                     if (targetParentId == currentParentId) {
                         loadFiles(currentParentId); // Refresh!
                     }
+                    if (window.updateUserData) window.updateUserData();
                 }
             }
         } else if (t.status === 'processing' || t.status === 'pending') {
@@ -811,4 +971,9 @@ function renderTransfers(transfers) {
         panel.style.display = 'none';
         panel.classList.add('collapsed'); // Reset state
     }
+}
+
+function editFile(id) {
+    // Open editor in a new tab/window
+    window.open(`/editor.html?id=${id}`, '_blank');
 }

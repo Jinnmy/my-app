@@ -1,0 +1,183 @@
+window.initUsersPage = function () {
+    const userList = document.getElementById('users-list');
+    const userModal = document.getElementById('user-modal');
+    const userForm = document.getElementById('user-form');
+    const addUserBtn = document.getElementById('add-user-btn');
+    const closeModalBtn = document.querySelector('.close-modal');
+    const cancelBtn = document.querySelector('.close-modal-btn');
+    const modalTitle = document.getElementById('user-modal-title');
+    const token = localStorage.getItem('token');
+    const user = JSON.parse(localStorage.getItem('user') || '{}');
+
+    // Access Control
+    if (user.role !== 'admin') {
+        alert('Access Denied: Admins only.');
+        window.location.href = '#'; // Or loadPage('dashboard-home') if using router, but simplified here.
+        // Better: trigger router to go home
+        if (window.loadPage) window.loadPage('dashboard-home');
+        return;
+    }
+
+    // Helper to format bytes
+    function formatBytes(bytes, decimals = 2) {
+        if (!+bytes) return '0 Bytes';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+    }
+
+    // Fetch Users
+    async function fetchUsers() {
+        try {
+            const response = await fetch('/api/users', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const users = await response.json();
+            renderUsers(users);
+        } catch (error) {
+            console.error('Error fetching users:', error);
+            alert('Failed to load users');
+        }
+    }
+
+    // Render Users
+    function renderUsers(users) {
+        userList.innerHTML = users.map(user => `
+            <tr>
+                <td>${user.username}</td>
+                <td>${user.email}</td>
+                <td><span class="badge ${user.role}">${user.role}</span></td>
+                <td>
+                    <div class="storage-info">
+                        ${formatBytes(user.used_storage)} / ${formatBytes(user.storage_limit)}
+                    </div>
+                </td>
+                <td>
+                    <button class="action-btn edit" data-id="${user.id}"><i class="feather-edit-2"></i> Edit</button>
+                    <button class="action-btn delete" data-id="${user.id}"><i class="feather-trash"></i></button>
+                </td>
+            </tr>
+        `).join('');
+
+        // Attach event listeners to new buttons
+        document.querySelectorAll('.edit').forEach(btn => {
+            btn.addEventListener('click', () => editUser(btn.dataset.id, users));
+        });
+        document.querySelectorAll('.delete').forEach(btn => {
+            btn.addEventListener('click', () => deleteUser(btn.dataset.id));
+        });
+    }
+
+    // Open Modal (Add)
+    if (addUserBtn) {
+        addUserBtn.addEventListener('click', () => {
+            modalTitle.textContent = 'Add User';
+            userForm.reset();
+            document.getElementById('user-id').value = '';
+            document.getElementById('password').required = true;
+            document.getElementById('password').placeholder = '';
+            userModal.classList.add('active');
+        });
+    }
+
+    // Edit User
+    function editUser(id, users) {
+        const user = users.find(u => u.id == id);
+        if (!user) return;
+
+        modalTitle.textContent = 'Edit User';
+        document.getElementById('user-id').value = user.id;
+        document.getElementById('username').value = user.username;
+        document.getElementById('email').value = user.email;
+        document.getElementById('role').value = user.role;
+        document.getElementById('storage_limit').value = user.storage_limit;
+
+        document.getElementById('password').required = false;
+        document.getElementById('password').placeholder = 'Leave blank to keep unchanged';
+
+        userModal.classList.add('active');
+    }
+
+    // Close Modal
+    function closeModal() {
+        userModal.classList.remove('active');
+    }
+    if (closeModalBtn) closeModalBtn.addEventListener('click', closeModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+    window.addEventListener('click', (e) => {
+        if (e.target === userModal) closeModal();
+    });
+
+    // Handle Form Submit
+    if (userForm) {
+        userForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('user-id').value;
+            const formData = {
+                username: document.getElementById('username').value,
+                email: document.getElementById('email').value,
+                role: document.getElementById('role').value,
+                storage_limit: document.getElementById('storage_limit').value,
+            };
+
+            const password = document.getElementById('password').value;
+            if (password) formData.password = password;
+
+            try {
+                const url = id ? `/api/users/${id}` : '/api/users';
+                const method = id ? 'PUT' : 'POST';
+
+                const response = await fetch(url, {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || 'Operation failed');
+                }
+
+                closeModal();
+                fetchUsers();
+                alert(id ? 'User updated successfully' : 'User created successfully');
+
+            } catch (error) {
+                console.error('Error saving user:', error);
+                alert(error.message);
+            }
+        });
+    }
+
+    // Delete User
+    async function deleteUser(id) {
+        if (!confirm('Are you sure you want to delete this user?')) return;
+
+        try {
+            const response = await fetch(`/api/users/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!response.ok) {
+                const result = await response.json();
+                throw new Error(result.error || 'Delete failed');
+            }
+
+            fetchUsers();
+            alert('User deleted successfully');
+        } catch (error) {
+            console.error('Error deleting user:', error);
+            alert(error.message);
+        }
+    }
+
+    // Initial Load
+    fetchUsers();
+};

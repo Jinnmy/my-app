@@ -51,7 +51,18 @@ const userController = {
                 expiresIn: 86400 // 24 hours
             });
 
-            res.status(200).json({ auth: true, token: token, user: { id: user.id, username: user.username, email: user.email, role: user.role } });
+            res.status(200).json({
+                auth: true,
+                token: token,
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    email: user.email,
+                    role: user.role,
+                    storage_limit: user.storage_limit || 10737418240,
+                    used_storage: user.used_storage || 0
+                }
+            });
         });
     },
 
@@ -74,6 +85,61 @@ const userController = {
                 return res.status(404).json({ error: 'User not found' });
             }
             res.json(user);
+        });
+    },
+
+    getMe: (req, res) => {
+        const id = req.user.id;
+        UserModel.findById(id, (err, user) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!user) return res.status(404).json({ error: 'User not found' });
+
+            // Return safe user data
+            res.json({
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                role: user.role,
+                storage_limit: user.storage_limit || 10737418240,
+                used_storage: user.used_storage || 0
+            });
+        });
+    },
+
+    updateUser: (req, res) => {
+        const id = req.params.id;
+        const { username, email, password, role, storage_limit } = req.body;
+
+        // Basic validation could go here
+
+        let updateData = { username, email, role, storage_limit };
+        if (password) {
+            updateData.password = bcrypt.hashSync(password, 8);
+        }
+
+        UserModel.update(id, updateData, (err, changes) => {
+            if (err) {
+                if (err.message.includes('UNIQUE constraint failed')) {
+                    return res.status(409).json({ error: 'Email already exists' });
+                }
+                return res.status(500).json({ error: err.message });
+            }
+            if (changes === 0) {
+                return res.status(404).json({ error: 'User not found' });
+            }
+            res.json({ message: 'User updated successfully' });
+        });
+    },
+
+    deleteUser: (req, res) => {
+        const id = req.params.id;
+        // Optional: Prevent deleting self
+        // if (req.user.id == id) return res.status(400).json({ error: "Cannot delete yourself" });
+
+        UserModel.delete(id, (err, changes) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (changes === 0) return res.status(404).json({ error: 'User not found' });
+            res.json({ message: 'User deleted successfully' });
         });
     }
 };

@@ -102,7 +102,52 @@ class FileController {
             return res.status(500).json({ error: 'Storage not configured' });
         }
 
-        // Determine final destination path
+        // Check Storage Limit
+        const UserModel = require('../models/userModel');
+        UserModel.findById(userId, (err, user) => {
+            if (err || !user) {
+                fs.unlink(file.path, () => { });
+                return res.status(500).json({ error: 'Failed to retrieve user data' });
+            }
+
+            const currentUsed = user.used_storage || 0;
+            const limit = user.storage_limit || 10737418240; // Default 10GB if missing
+
+            if (currentUsed + file.size > limit) {
+                fs.unlink(file.path, () => { });
+                return res.status(400).json({ error: 'Storage limit exceeded' });
+            }
+
+            // proceed to resolve destination
+            resolveDestination((err, finalPath) => {
+                if (err) {
+                    fs.unlink(file.path, () => { }); // Cleanup
+                    return res.status(400).json({ error: err.message });
+                }
+
+                // Create Transfer Record
+                TransferModel.create({
+                    user_id: userId,
+                    type: 'upload',
+                    source: file.path,
+                    destination: finalPath,
+                    metadata: {
+                        originalname: file.originalname,
+                        size: file.size,
+                        mimetype: file.mimetype,
+                        parentId: (parentId && parentId !== 'null' && parentId !== 'undefined') ? parentId : null
+                    }
+                }, (err, transfer) => {
+                    if (err) {
+                        fs.unlink(file.path, () => { });
+                        return res.status(500).json({ error: 'Failed to queue transfer: ' + err.message });
+                    }
+                    res.json({ message: 'Upload queued', transfer });
+                });
+            });
+        });
+
+        // Determine final destination path (Moved inside callback above to chain correctly)
         const resolveDestination = (cb) => {
             if (parentId && parentId !== 'null' && parentId !== 'undefined') {
                 FileModel.findById(parentId, (err, parent) => {
@@ -114,33 +159,6 @@ class FileController {
                 cb(null, path.join(rootPath, file.originalname));
             }
         };
-
-        resolveDestination((err, finalPath) => {
-            if (err) {
-                fs.unlink(file.path, () => { }); // Cleanup
-                return res.status(400).json({ error: err.message });
-            }
-
-            // Create Transfer Record
-            TransferModel.create({
-                user_id: userId,
-                type: 'upload',
-                source: file.path,
-                destination: finalPath,
-                metadata: {
-                    originalname: file.originalname,
-                    size: file.size,
-                    mimetype: file.mimetype,
-                    parentId: (parentId && parentId !== 'null' && parentId !== 'undefined') ? parentId : null
-                }
-            }, (err, transfer) => {
-                if (err) {
-                    fs.unlink(file.path, () => { });
-                    return res.status(500).json({ error: 'Failed to queue transfer: ' + err.message });
-                }
-                res.json({ message: 'Upload queued', transfer });
-            });
-        });
     }
 
     // Download file
@@ -236,6 +254,13 @@ class FileController {
                 // Remove from DB
                 FileModel.delete(id, (err) => {
                     if (err) return res.status(500).json({ error: err.message });
+
+                    // Update User Storage
+                    const UserModel = require('../models/userModel');
+                    UserModel.updateStorage(file.user_id, -file.size, (err) => {
+                        if (err) console.error('Failed to update storage usage on delete:', err);
+                    });
+
                     res.json({ message: 'Deleted successfully' });
                 });
             });
@@ -365,6 +390,73 @@ class FileController {
                 res.writeHead(200, headers);
                 fs.createReadStream(videoPath).pipe(res);
             }
+        });
+    }
+    // Share file
+    static share(req, res) {
+        const id = req.params.id;
+        const { targetBy, value, permission } = req.body; // targetBy: 'id' or 'email', value: id or email
+        const userId = req.user.id;
+
+        // Verify ownership
+        FileModel.findById(id, (err, file) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!file) return res.status(404).json({ error: 'File not found' });
+            if (file.user_id !== userId) return res.status(403).json({ error: 'Only owner can share' });
+
+            // Resolve User
+            const UserModel = require('../models/userModel');
+            const resolveUser = (cb) => {
+                if (targetBy === 'id') return UserModel.findById(value, cb);
+                if (targetBy === 'email') return UserModel.findByEmail(value, cb);
+                cb(new Error('Invalid target type'));
+            };
+
+            resolveUser((err, targetUser) => {
+                if (err) return res.status(500).json({ error: err.message });
+                if (!targetUser) return res.status(404).json({ error: 'User not found' });
+                if (targetUser.id === userId) return res.status(400).json({ error: 'Cannot share with yourself' });
+
+                FileModel.share(id, targetUser.id, permission || 'view', (err) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    res.json({ message: `Shared with ${targetUser.username}` });
+                });
+            });
+        });
+    }
+
+    // Unshare file
+    static unshare(req, res) {
+        const id = req.params.id;
+        const { targetUserId } = req.body;
+        const userId = req.user.id;
+
+        FileModel.findById(id, (err, file) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!file) return res.status(404).json({ error: 'File not found' });
+            if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
+
+            FileModel.unshare(id, targetUserId, (err) => {
+                if (err) return res.status(500).json({ error: err.message });
+                res.json({ message: 'Access revoked' });
+            });
+        });
+    }
+
+    // Get Shared Users
+    static getSharedUsers(req, res) {
+        const id = req.params.id;
+        const userId = req.user.id;
+
+        FileModel.findById(id, (err, file) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!file) return res.status(404).json({ error: 'File not found' });
+            if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
+
+            FileModel.getSharedUsers(id, (err, users) => {
+                if (err) return res.status(500).json({ error: err.message });
+                res.json(users);
+            });
         });
     }
 }

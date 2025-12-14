@@ -31,6 +31,24 @@ const initFileTable = () => {
             });
         }
     });
+
+    // Create Shared Files Table
+    const shareSql = `
+        CREATE TABLE IF NOT EXISTS shared_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL, -- User who receives access
+            permission TEXT DEFAULT 'view', -- 'view' or 'edit'
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(file_id, user_id)
+        )
+    `;
+    db.run(shareSql, (err) => {
+        if (err) console.error('Error creating shared_files table:', err.message);
+        else console.log('Shared files table ready.');
+    });
 };
 
 initFileTable();
@@ -59,15 +77,61 @@ class FileModel {
     }
 
     static findByParentId(userId, parentId, callback) {
-        const sql = parentId
-            ? `SELECT * FROM files WHERE user_id = ? AND parent_id = ?`
-            : `SELECT * FROM files WHERE user_id = ? AND parent_id IS NULL`;
+        // If parentId is NULL (root), we want own files AND shared files
+        // But files shared with me should probably appear in a specific "Shared with me" section or mixed in root?
+        // Let's mix them in root for now, or strict separate folder.
+        // User request: "right click ... share ... user to share with".
+        // Usually these appear in root or "Shared" folder.
+        // Let's simply include them in the root listing if parentId is null.
 
-        const params = parentId ? [userId, parentId] : [userId];
+        let sql = ``;
+        let params = [];
 
-        db.all(sql, params, (err, rows) => {
-            callback(err, rows);
-        });
+        if (parentId) {
+            // Inside a folder: Strict ownership or if the user has access to this parent folder?
+            // Simplification: If you have access to parent, you see its children.
+            // But checking parent permission recursively is complex in SQL.
+            // For now: Only show owned files in subfolders. 
+            // Ideally we check if parent is shared with user. 
+
+            // 1. Check if parent folder is shared with user
+            const checkShare = `SELECT 1 FROM shared_files WHERE file_id = ? AND user_id = ?`;
+            db.get(checkShare, [parentId, userId], (err, row) => {
+                if (row) {
+                    // Parent is shared, so list its children
+                    sql = `SELECT * FROM files WHERE parent_id = ?`;
+                    db.all(sql, [parentId], (err, rows) => callback(err, rows));
+                } else {
+                    // Parent not shared explicitly, check ownership.
+                    // If user owns parent, they see files.
+                    sql = `SELECT * FROM files WHERE user_id = ? AND parent_id = ?`;
+                    db.all(sql, [userId, parentId], (err, rows) => callback(err, rows));
+                }
+            });
+            return; // Async handled above
+        } else {
+            // Root: Own files (parent is null) OR Shared files (files shared with me)
+            // Note: Shared files might be deep inside structure but if shared explicitly, they appear.
+            // Assumption: We only show items shared at root or items moved to root? 
+            // Better: Show all files where I am owner AND parent is NULL
+            // PLUS all files where I am in shared_files.
+
+            sql = `
+                SELECT f.*, 'owner' as role FROM files f 
+                WHERE f.user_id = ? AND f.parent_id IS NULL
+                
+                UNION
+                
+                SELECT f.*, sf.permission as role FROM files f
+                JOIN shared_files sf ON f.id = sf.file_id
+                WHERE sf.user_id = ?
+            `;
+            params = [userId, userId];
+
+            db.all(sql, params, (err, rows) => {
+                callback(err, rows);
+            });
+        }
     }
 
     static findAll(callback) {
@@ -110,6 +174,31 @@ class FileModel {
         db.run(sql, [id], function (err) {
             callback(err, this.changes);
         });
+    }
+
+    // Share Methods
+    static share(fileId, targetUserId, permission, callback) {
+        const sql = `INSERT OR REPLACE INTO shared_files (file_id, user_id, permission) VALUES (?, ?, ?)`;
+        db.run(sql, [fileId, targetUserId, permission], function (err) {
+            callback(err);
+        });
+    }
+
+    static unshare(fileId, targetUserId, callback) {
+        const sql = `DELETE FROM shared_files WHERE file_id = ? AND user_id = ?`;
+        db.run(sql, [fileId, targetUserId], function (err) {
+            callback(err);
+        });
+    }
+
+    static getSharedUsers(fileId, callback) {
+        const sql = `
+            SELECT u.id, u.username, u.email, sf.permission
+            FROM users u
+            JOIN shared_files sf ON u.id = sf.user_id
+            WHERE sf.file_id = ?
+        `;
+        db.all(sql, [fileId], (err, rows) => callback(err, rows));
     }
 }
 
