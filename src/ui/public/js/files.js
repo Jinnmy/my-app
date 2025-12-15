@@ -12,13 +12,20 @@ async function initFilesPage() {
     setupFileEventListeners();
     setupContextMenu();
     setupMoveModal();
-    setupMoveModal();
-    setupMoveModal();
     setupShareModal();
     setupVideoModal();
     setupTransferPanel();
     startTransferPolling();
+    // setupSearch(); // Moved to global app.js
 }
+
+// setupSearch removed - moved to search.js
+
+
+
+
+
+// Search rendering functions removed - moved to search.js
 
 
 async function loadFiles(parentId) {

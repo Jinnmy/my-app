@@ -728,3 +728,126 @@ body {
 .storage-bar-fill.danger {
     background-color: #ef4444;
 }
+
+/* Search Dropdown Styles (Reddit-like) */
+#search-results-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #1A1A1B;
+    /* Reddit Dark Bg */
+    border: 1px solid #343536;
+    border-radius: 0 0 8px 8px;
+    margin-top: 4px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    overflow: hidden;
+    display: none;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* Ensure container has relative positioning */
+.search-container {
+    position: relative;
+    width: 400px;
+    /* Or whatever the width is */
+}
+
+/* Make input match dropdown style when active */
+.search-container input:focus {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    border-color: #343536;
+    background: #1A1A1B;
+}
+
+.search-result-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid #343536;
+    transition: background-color 0.2s;
+    color: #D7DADC;
+}
+
+.search-result-item:last-child {
+    border-bottom: none;
+}
+
+.search-result-item:hover {
+    background-color: #272729;
+}
+
+.search-result-icon {
+    margin-right: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    color: #D7DADC;
+}
+
+.search-result-info {
+    flex: 1;
+    overflow: hidden;
+}
+
+.search-result-name {
+    font-size: 0.9rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #D7DADC;
+}
+
+.search-result-meta {
+    font-size: 0.75rem;
+    color: #818384;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.search-result-caption {
+    color: #818384;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.search-footer {
+    padding: 0;
+    border-top: 1px solid #343536;
+    background: #1A1A1B;
+}
+
+.search-footer button {
+    width: 100%;
+    padding: 12px;
+    background: transparent;
+    border: none;
+    color: var(--primary-color);
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    text-align: left;
+    padding-left: 16px;
+    transition: background 0.2s;
+}
+
+.search-footer button:hover {
+    background: #272729;
+    text-decoration: none;
+}
+
+.search-no-results {
+    padding: 20px;
+    text-align: center;
+    color: #818384;
+    font-style: italic;
+}

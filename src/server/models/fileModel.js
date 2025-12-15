@@ -29,6 +29,17 @@ const initFileTable = () => {
                     console.log('Added user_id column to files table.');
                 }
             });
+
+            // Migration: Add caption and tags columns
+            const captionSql = `ALTER TABLE files ADD COLUMN caption TEXT`;
+            db.run(captionSql, (err) => {
+                if (!err) console.log('Added caption column to files table.');
+            });
+
+            const tagsSql = `ALTER TABLE files ADD COLUMN tags TEXT`;
+            db.run(tagsSql, (err) => {
+                if (!err) console.log('Added tags column to files table.');
+            });
         }
     });
 
@@ -55,9 +66,11 @@ initFileTable();
 
 class FileModel {
     static create(file, callback) {
-        const { name, path, type, size, parent_id, user_id } = file;
-        const sql = `INSERT INTO files (name, path, type, size, parent_id, user_id) VALUES (?, ?, ?, ?, ?, ?)`;
-        db.run(sql, [name, path, type, size, parent_id, user_id], function (err) {
+        const { name, path: filePath, type, size, parent_id, user_id, caption, tags } = file;
+        const sql = `INSERT INTO files (name, path, type, size, parent_id, user_id, caption, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+        const tagsStr = tags ? JSON.stringify(tags) : null;
+
+        db.run(sql, [name, filePath, type, size, parent_id, user_id, caption, tagsStr], function (err) {
             callback(err, { id: this.lastID, ...file });
         });
     }
@@ -156,8 +169,9 @@ class FileModel {
     }
 
     static search(userId, query, type, callback) {
-        let sql = `SELECT * FROM files WHERE user_id = ? AND name LIKE ?`;
-        const params = [userId, `%${query}%`];
+        let sql = `SELECT * FROM files WHERE user_id = ? AND (name LIKE ? OR caption LIKE ? OR tags LIKE ?)`;
+        const wildcard = `%${query}%`;
+        const params = [userId, wildcard, wildcard, wildcard];
 
         if (type) {
             sql += ` AND type = ?`;

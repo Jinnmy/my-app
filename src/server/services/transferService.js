@@ -3,6 +3,7 @@ const path = require('path');
 const TransferModel = require('../models/transferModel');
 const FileModel = require('../models/fileModel');
 const UserModel = require('../models/userModel');
+const CaptionService = require('../services/captionService');
 
 const CONCURRENCY_LIMIT = 2; // Simultaneous transfers
 
@@ -102,25 +103,44 @@ class TransferService {
             });
 
             // Record in DB
-            FileModel.create({
-                name: metadata.originalname,
-                path: destination,
-                type: 'file',
-                size: metadata.size,
-                parent_id: metadata.parentId,
-                user_id: user_id
-            }, (err, newFile) => {
-                if (err) {
-                    return TransferModel.updateStatus(id, 'failed', 'File saved but DB update failed: ' + err.message);
-                }
+            const finalizeUpload = (captionData = {}) => {
+                FileModel.create({
+                    name: metadata.originalname,
+                    path: destination,
+                    type: 'file',
+                    size: metadata.size,
+                    parent_id: metadata.parentId,
+                    user_id: user_id,
+                    caption: captionData.caption || null,
+                    tags: captionData.tags || []
+                }, (err, newFile) => {
+                    if (err) {
+                        return TransferModel.updateStatus(id, 'failed', 'File saved but DB update failed: ' + err.message);
+                    }
 
-                // Update User Storage
-                UserModel.updateStorage(user_id, metadata.size, (err) => {
-                    if (err) console.error('Failed to update storage usage on upload:', err);
+                    // Update User Storage
+                    UserModel.updateStorage(user_id, metadata.size, (err) => {
+                        if (err) console.error('Failed to update storage usage on upload:', err);
+                    });
+
+                    TransferModel.updateStatus(id, 'completed');
                 });
+            };
 
-                TransferModel.updateStatus(id, 'completed');
-            });
+            // Check if image and trigger captioning
+            const ext = path.extname(metadata.originalname).toLowerCase();
+            const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.bmp'];
+
+            if (imageExts.includes(ext)) {
+                CaptionService.generateCaption(destination)
+                    .then(result => finalizeUpload(result))
+                    .catch(err => {
+                        console.error('Captioning failed unexpectedly:', err);
+                        finalizeUpload(); // Proceed without caption
+                    });
+            } else {
+                finalizeUpload();
+            }
         });
     }
 

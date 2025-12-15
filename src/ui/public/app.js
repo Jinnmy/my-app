@@ -17,6 +17,9 @@ async function initDashboard() {
     await loadComponent('components/sidebar.html', 'sidebar-container');
     await loadComponent('components/topbar.html', 'topbar-container');
 
+    // Setup Global Search
+    if (window.setupSearch) window.setupSearch();
+
     // Initialize User Info in Topbar (after it's loaded)
     const logoutBtn = document.getElementById('logoutBtn');
     if (logoutBtn) {
@@ -106,6 +109,7 @@ async function loadComponent(path, targetId) {
 }
 
 async function loadPage(pageName) {
+    window.currentPage = pageName;
     const mainContent = document.getElementById('main-content-area');
     // mainContent.innerHTML = '<div class="loading">Loading...</div>'; // Optional loading state
 
@@ -117,9 +121,9 @@ async function loadPage(pageName) {
 
         // Initialize Page Scripts if needed
         if (pageName === 'files') {
-            if (window.initFilesPage) window.initFilesPage();
+            if (window.initFilesPage) await window.initFilesPage();
         } else if (pageName === 'users') {
-            if (window.initUsersPage) window.initUsersPage();
+            if (window.initUsersPage) await window.initUsersPage();
         }
 
         // Update active state in sidebar
