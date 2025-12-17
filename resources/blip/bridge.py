@@ -22,28 +22,28 @@ def run_inference(image_path):
 
     try:
         # Load Processor (for tokenization and image processing)
-        print("DEBUG: Loading processor...", file=sys.stderr)
+
         processor = BlipProcessor.from_pretrained(MODEL_ID)
 
         # Load ONNX sessions
-        print("DEBUG: Loading ONNX sessions...", file=sys.stderr)
+
         vision_sess = onnxruntime.InferenceSession(VISION_MODEL_ONNX)
         text_sess = onnxruntime.InferenceSession(TEXT_DECODER_ONNX)
 
         # Preprocess image
-        print(f"DEBUG: Processing image {image_path}...", file=sys.stderr)
+
         image = Image.open(image_path).convert('RGB')
         inputs = processor(images=image, return_tensors="np")
         pixel_values = inputs["pixel_values"]
 
         # Run Vision Model
-        print("DEBUG: Running vision model...", file=sys.stderr)
+
         vision_inputs = {vision_sess.get_inputs()[0].name: pixel_values}
         vision_outputs = vision_sess.run(None, vision_inputs)
         image_embeds = vision_outputs[0]
         
         # Run Text Decoder (Greedy Search)
-        print("DEBUG: Running text decoder...", file=sys.stderr)
+
         bos_token_id = processor.tokenizer.bos_token_id
         if bos_token_id is None:
             bos_token_id = processor.tokenizer.cls_token_id
@@ -71,19 +71,19 @@ def run_inference(image_path):
             next_token_logits = logits[:, -1, :]
             next_token_id = np.argmax(next_token_logits, axis=-1)
             
-            print(f"DEBUG: Step {i} - Token ID: {next_token_id[0]}", file=sys.stderr)
+
 
             # Append
             input_ids = np.concatenate([input_ids, next_token_id[:, None]], axis=1)
             attention_mask = np.concatenate([attention_mask, np.ones((1, 1), dtype=np.int64)], axis=1)
             
             if next_token_id[0] == eos_token_id:
-                print("DEBUG: EOS token reached.", file=sys.stderr)
+
                 break
                 
-        print(f"DEBUG: Final input_ids: {input_ids}", file=sys.stderr)
+
         caption = processor.decode(input_ids[0], skip_special_tokens=True)
-        print(f"DEBUG: Raw Caption: '{caption}'", file=sys.stderr)
+
         # Print ONLY the caption to stdout so Node.js can capture it
         print(caption)
         sys.stdout.flush()

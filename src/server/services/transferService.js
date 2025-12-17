@@ -4,6 +4,7 @@ const TransferModel = require('../models/transferModel');
 const FileModel = require('../models/fileModel');
 const UserModel = require('../models/userModel');
 const CaptionService = require('../services/captionService');
+const SummarizationService = require('../services/SummarizationService');
 
 const CONCURRENCY_LIMIT = 2; // Simultaneous transfers
 
@@ -137,6 +138,16 @@ class TransferService {
                     .catch(err => {
                         console.error('Captioning failed unexpectedly:', err);
                         finalizeUpload(); // Proceed without caption
+                    });
+            } else if (['.txt', '.docx'].includes(ext)) {
+                SummarizationService.generateSummary(destination)
+                    .then(summary => {
+                        const tags = CaptionService.generateTags(summary);
+                        finalizeUpload({ caption: summary, tags: tags });
+                    })
+                    .catch(err => {
+                        console.error('Summarization failed unexpectedly:', err);
+                        finalizeUpload();
                     });
             } else {
                 finalizeUpload();

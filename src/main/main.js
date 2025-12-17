@@ -1,5 +1,12 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage } = require('electron');
 const path = require('node:path');
+
+let tray = null;
+let isQuitting = false;
+
+// Generic cloud icon (base64)
+const iconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAAAbUlEQVR4nO2WQQqAMAwE/f+f7EX0KCK4tB68CBSyDd1MdxQopX4sy5J07GMqXwB6wD5W8QWgB+xjFV8AesA+VvEFoAfsYxVfAHrAPlbxBaAH7GMVXwB6wD5W8QWgB+xjFV8AesA+1v/wl6z77wAlJzpB2wAAAABJRU5ErkJggg==';
+const icon = nativeImage.createFromDataURL(`data:image/png;base64,${iconBase64}`);
 const { startServer } = require('../server/server');
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -8,6 +15,48 @@ if (require('electron-squirrel-startup')) {
 }
 
 const fs = require('fs');
+
+const createTray = () => {
+  tray = new Tray(icon);
+  tray.setToolTip('NAS 2.0');
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Open Dashboard',
+      click: () => {
+        const windows = BrowserWindow.getAllWindows();
+        if (windows.length > 0) {
+          windows[0].show();
+        } else {
+          createWindow();
+        }
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      }
+    }
+  ]);
+
+  tray.setContextMenu(contextMenu);
+
+  tray.on('double-click', () => {
+    const windows = BrowserWindow.getAllWindows();
+    if (windows.length > 0) {
+      if (windows[0].isVisible()) {
+        windows[0].hide();
+      } else {
+        windows[0].show();
+      }
+    } else {
+      createWindow();
+    }
+  });
+};
 
 const createWindow = () => {
   // Create the browser window.
@@ -20,6 +69,29 @@ const createWindow = () => {
       contextIsolation: true
     },
     autoHideMenuBar: true // Make it look more like an app
+  });
+
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return; // Let it close if we are quitting
+
+    const settingsPath = path.join(__dirname, '../server/config/settings.json');
+    let shouldMinimize = true; // Default
+
+    try {
+      if (fs.existsSync(settingsPath)) {
+        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+        if (settings.minimizeToTray !== undefined) {
+          shouldMinimize = settings.minimizeToTray;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to read settings in main process:', e);
+    }
+
+    if (shouldMinimize) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
   });
 
   const configPath = path.join(__dirname, '../server/config/storage.json');
@@ -41,6 +113,7 @@ const createWindow = () => {
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
   startServer(app); // Start the Express server with Electron app instance
+  createTray();
   createWindow();
 
   // On OS X it's common to re-create a window in the app when the
@@ -56,7 +129,7 @@ app.whenReady().then(() => {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && isQuitting) {
     app.quit();
   }
 });

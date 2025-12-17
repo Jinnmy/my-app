@@ -110,6 +110,14 @@ async function loadComponent(path, targetId) {
 
 async function loadPage(pageName) {
     window.currentPage = pageName;
+
+    // Check environment (Electron) and restrict Files page
+    if (pageName === 'files' && window.electronAPI && window.electronAPI.isElectron) {
+        console.log('Files page is restricted in Electron app');
+        // Redirect to dashboard or show error? Let's redirect to dashboard
+        return loadPage('dashboard-home');
+    }
+
     const mainContent = document.getElementById('main-content-area');
     // mainContent.innerHTML = '<div class="loading">Loading...</div>'; // Optional loading state
 
@@ -124,6 +132,10 @@ async function loadPage(pageName) {
             if (window.initFilesPage) await window.initFilesPage();
         } else if (pageName === 'users') {
             if (window.initUsersPage) await window.initUsersPage();
+        } else if (pageName === 'dashboard-home') {
+            loadRecentFiles();
+        } else if (pageName === 'settings') {
+            if (window.initSettingsPage) await window.initSettingsPage();
         }
 
         // Update active state in sidebar
@@ -151,11 +163,16 @@ function updateActiveNavLink(pageName) {
     const user = JSON.parse(localStorage.getItem('user') || '{}');
 
     navItems.forEach(item => {
-        // Hide Users link if not admin
-        if (item.dataset.page === 'users' && user.role !== 'admin') {
+        // Hide Users and Settings link if not admin
+        if ((item.dataset.page === 'users' || item.dataset.page === 'settings') && user.role !== 'admin') {
             item.style.display = 'none';
         } else {
-            if (item.dataset.page === 'users') item.style.display = 'flex'; // Ensure visible for admin
+            // New check: Hide Files link if in Electron
+            if (item.dataset.page === 'files' && window.electronAPI && window.electronAPI.isElectron) {
+                item.style.display = 'none';
+            } else {
+                if (item.dataset.page === 'users' || item.dataset.page === 'settings') item.style.display = 'flex'; // Ensure visible for admin
+            }
         }
 
         if (item.dataset.page === pageName) {
@@ -220,4 +237,152 @@ function handleLogout() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     window.location.href = 'index.html';
+}
+
+async function loadRecentFiles() {
+    const list = document.getElementById('recent-files-list');
+    const emptyState = document.getElementById('dashboard-empty-state');
+    if (!list) return;
+
+    list.innerHTML = '<div class="loading-state">Loading recent files...</div>';
+    emptyState.style.display = 'none';
+
+    try {
+        const token = localStorage.getItem('token');
+        const response = await fetch('/api/files/recent?limit=5', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (response.ok) {
+            const files = await response.json();
+            list.innerHTML = '';
+
+            if (files.length === 0) {
+                // hide recent section or show "No recent files"
+                document.querySelector('.recent-files-section').style.display = 'none';
+                emptyState.style.display = 'flex';
+            } else {
+                document.querySelector('.recent-files-section').style.display = 'block';
+                files.forEach(file => {
+                    const card = createRecentFileCard(file);
+                    list.appendChild(card);
+                });
+            }
+        } else {
+            console.error('Failed to load recent files');
+            list.innerHTML = '<div class="error-state">Failed to load recent files</div>';
+        }
+    } catch (e) {
+        console.error('Error loading recent files:', e);
+        list.innerHTML = '<div class="error-state">Error loading recent files</div>';
+    }
+}
+
+function createRecentFileCard(file) {
+    const fileCard = document.createElement('div');
+    fileCard.className = 'file-card';
+    // Minimal event listeners for recent files (mostly just open/view)
+
+    // Determine File Type (Simplified version of files.js logic)
+    const isImage = file.type === 'file' && /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
+    const isVideo = file.type === 'file' && /\.(mp4|webm|ogg|mkv)$/i.test(file.name);
+    const isDocx = file.type === 'file' && file.name.toLowerCase().endsWith('.docx');
+
+    let icon = '';
+    if (file.type === 'folder') {
+        icon = `
+        <svg xmlns="http://www.w3.org/2000/svg" class="file-icon folder-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19.5 21a3 3 0 0 0 3-3v-4.5a3 3 0 0 0-3-3h-15a3 3 0 0 0-3 3V18a3 3 0 0 0 3 3h15ZM1.5 10.146V6a3 3 0 0 1 3-3h5.379a2.25 2.25 0 0 1 1.59.659l2.122 2.121c.14.141.331.22.53.22H19.5a3 3 0 0 1 3 3v1.146A4.483 4.483 0 0 0 19.5 9h-15a4.483 4.483 0 0 0-3 1.146Z" />
+        </svg>`;
+    } else if (isImage) {
+        const token = localStorage.getItem('token');
+        const imageUrl = `/api/files/download/${file.id}?token=${token}`;
+        icon = `<img src="${imageUrl}" alt="${file.name}" class="file-preview-img" loading="lazy" />`;
+    } else if (isVideo) {
+        icon = `
+        <svg xmlns="http://www.w3.org/2000/svg" class="file-icon video-icon" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M4.5 4.5a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h8.25a3 3 0 0 0 3-3v-9a3 3 0 0 0-3-3H4.5ZM19.94 18.75l-2.69-2.69V7.94l2.69-2.69c.944-.945 2.56-.276 2.56 1.06v11.38c0 1.336-1.616 2.005-2.56 1.06Z" />
+        </svg>`;
+    } else {
+        icon = `
+        <svg xmlns="http://www.w3.org/2000/svg" class="file-icon doc-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path fill-rule="evenodd" d="M5.625 1.5H9a3.75 3.75 0 0 1 3.75 3.75v1.875c0 1.036.84 1.875 1.875 1.875H16.5a3.75 3.75 0 0 1 3.75 3.75v7.875c0 1.035-.84 1.875-1.875 1.875H5.625a1.875 1.875 0 0 1-1.875-1.875V3.375c0-1.036.84-1.875 1.875-1.875ZM12.75 12a.75.75 0 0 0-1.5 0v2.25H9a.75.75 0 0 0 0 1.5h2.25V18a.75.75 0 0 0 1.5 0v-2.25H15a.75.75 0 0 0 0-1.5h-2.25V12Z" clip-rule="evenodd" />
+            <path d="M14.25 5.25a5.23 5.23 0 0 0-1.279-3.434 9.768 9.768 0 0 1 6.963 6.963A5.23 5.23 0 0 0 16.5 7.5h-1.875a.375.375 0 0 1-.375-.375V5.25Z" />
+        </svg>`;
+    }
+
+    fileCard.innerHTML = `
+        <div class="file-icon-wrapper">${icon}</div>
+        <div class="file-info">
+            <div class="file-name" title="${file.name}">${file.name}</div>
+            <div class="file-meta">${file.type === 'folder' ? 'Folder' : formatBytes(file.size)}</div>
+        </div>
+    `;
+
+    // Add tooltip attributes like in files.js
+    if (file.caption) fileCard.dataset.caption = file.caption;
+    if (file.tags) {
+        try {
+            fileCard.dataset.tags = typeof file.tags === 'string' ? file.tags : JSON.stringify(file.tags);
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    // Tooltip Events
+    if (window.showTooltip) { // Check if function exists (loaded from files.js)
+        fileCard.addEventListener('mouseenter', (e) => window.showTooltip(e, fileCard));
+        fileCard.addEventListener('mouseleave', window.hideTooltip);
+        fileCard.addEventListener('mousemove', window.moveTooltip);
+    }
+
+    // Interaction (Same as files.js essentially)
+    if (file.type === 'folder') {
+        fileCard.addEventListener('dblclick', () => {
+            // Must redirect to Files page and open folder
+
+            // Check restriction before navigating
+            if (window.electronAPI && window.electronAPI.isElectron) {
+                alert('File browsing is only available in the web version.');
+                return;
+            }
+
+            // This is tricky because we are in Dashboard Home.
+            // Ideally we store "initialFolderId" in localStorage or URL param and switch to Files page.
+            // Simplified: Just go to files page root for now, or implement better deep linking later.
+            // A better way: 
+            window.location.hash = '#files'; // If we had hash routing
+            loadPage('files');
+            // And we'd need to tell it to open this folder. 
+            // We can hack it by setting a global variable or generic event.
+            // For now: Just load files page.
+            // Let's rely on User knowing to go to Files. 
+            // Or better:
+            // loadPage('files').then(() => { if(window.enterFolder) window.enterFolder(file.id, file.name); });
+            // But loadPage resets everything potentially.
+            // Let's keep it simple: DblClick on folder in recent goes to files.
+            alert('To browse this folder, go to "Files" in the sidebar.');
+        });
+    } else if (isImage) {
+        fileCard.addEventListener('dblclick', () => {
+            const token = localStorage.getItem('token');
+            window.open(`/api/files/download/${file.id}?token=${token}`, '_blank');
+        });
+    } else if (isVideo) {
+        fileCard.addEventListener('dblclick', () => {
+            // If playVideo is global (it is in files.js, but files.js is loaded... wait)
+            // files.js functions are global?
+            // "function playVideo" is not defined in the snippet I saw earlier (it was used but definition not shown or I missed it).
+            // It was probably further down in files.js.
+            // If it is global, we can call it.
+            if (window.playVideo) window.playVideo(file.id, file.name);
+            else alert('Video player not ready');
+        });
+    } else if (isDocx) {
+        fileCard.addEventListener('dblclick', () => {
+            if (window.editFile) window.editFile(file.id);
+        });
+    }
+
+    return fileCard;
 }

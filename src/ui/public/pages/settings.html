@@ -1,4 +1,82 @@
-<div style="color: white;">
+<div style="color: white; padding: 20px;">
     <h2>Settings</h2>
-    <p>Settings coming soon.</p>
+
+    <div class="settings-section" style="margin-top: 20px;">
+        <h3>Application Defaults</h3>
+        <div class="setting-item"
+            style="display: flex; align-items: center; justify-content: space-between; max-width: 400px; margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+            <div>
+                <strong style="display: block; font-size: 16px;">Minimize to Tray</strong>
+                <span style="display: block; font-size: 13px; color: #aaa; margin-top: 4px;">Keep app running in the
+                    background when closed</span>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="minimizeToTrayToggle">
+                <span class="slider round"></span>
+            </label>
+        </div>
+    </div>
 </div>
+
+<style>
+    /* Switch Styles */
+    .switch {
+        position: relative;
+        display: inline-block;
+        width: 50px;
+        height: 24px;
+    }
+
+    .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        -webkit-transition: .4s;
+        transition: .4s;
+    }
+
+    .slider:before {
+        position: absolute;
+        content: "";
+        height: 18px;
+        width: 18px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        -webkit-transition: .4s;
+        transition: .4s;
+    }
+
+    input:checked+.slider {
+        background-color: #2196F3;
+    }
+
+    input:focus+.slider {
+        box-shadow: 0 0 1px #2196F3;
+    }
+
+    input:checked+.slider:before {
+        -webkit-transform: translateX(26px);
+        -ms-transform: translateX(26px);
+        transform: translateX(26px);
+    }
+
+    /* Rounded sliders */
+    .slider.round {
+        border-radius: 34px;
+    }
+
+    .slider.round:before {
+        border-radius: 50%;
+    }
+</style>

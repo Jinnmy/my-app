@@ -20,6 +20,7 @@ const fileRoutes = require('./routes/fileRoutes');
 
 const transferRoutes = require('./routes/transferRoutes');
 const editorRoutes = require('./routes/editorRoutes');
+const settingsRoutes = require('./routes/settingsRoutes');
 const TransferService = require('./services/transferService');
 
 require('./socket')(io);
@@ -30,6 +31,7 @@ app.use('/api/files', fileRoutes);
 
 app.use('/api/transfers', transferRoutes);
 app.use('/api/editor', editorRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Start the transfer background worker
 TransferService.start();

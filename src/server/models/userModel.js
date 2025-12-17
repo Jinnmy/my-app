@@ -129,6 +129,13 @@ class UserModel {
             callback(err, this.changes);
         });
     }
+
+    static getTotalAllocation(callback) {
+        const sql = `SELECT SUM(storage_limit) as total FROM users`;
+        db.get(sql, [], (err, row) => {
+            callback(err, row ? row.total : 0);
+        });
+    }
 }
 
 module.exports = UserModel;

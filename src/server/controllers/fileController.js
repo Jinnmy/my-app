@@ -3,6 +3,9 @@ const path = require('path');
 const FileModel = require('../models/fileModel');
 const TransferModel = require('../models/transferModel');
 const storageConfigPath = path.join(__dirname, '../config/storage.json');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('ffmpeg-static');
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 // Helper to get root storage path
 const getStoragePath = () => {
@@ -34,6 +37,17 @@ class FileController {
         }
 
         FileModel.search(userId, query, type, (err, files) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json(files);
+        });
+    }
+
+    // Get recently accessed files
+    static getRecentlyAccessed(req, res) {
+        const userId = req.user.id;
+        const limit = parseInt(req.query.limit) || 5;
+
+        FileModel.findRecentlyAccessed(userId, limit, (err, files) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json(files);
         });
@@ -227,7 +241,21 @@ class FileController {
                             if (!res.headersSent) {
                                 res.status(500).send('Could not download file');
                             }
+                        } else {
+                            // Track access on successful download
+                            FileModel.updateLastAccessed(id, (err) => {
+                                if (err) console.error('Failed to update access time:', err);
+                            });
                         }
+                    });
+                }
+
+                // If inline (pipe), we also want to track access. 
+                // Pipe doesn't give a clear formatting "finish" callback easily on 'res' 
+                // but we can assume if we started piping, it's being accessed.
+                if (mimeType) {
+                    FileModel.updateLastAccessed(id, (err) => {
+                        if (err) console.error('Failed to update access time:', err);
                     });
                 }
             });
@@ -332,6 +360,55 @@ class FileController {
         });
     }
 
+    // Rename file/folder
+    static rename(req, res) {
+        const id = req.params.id;
+        const { newName } = req.body;
+        const userId = req.user.id;
+
+        if (!newName || typeof newName !== 'string' || newName.trim() === '') {
+            return res.status(400).json({ error: 'Invalid name' });
+        }
+
+        // Basic filename validation (prevent path traversal or invalid chars)
+        // Adjust regex as needed for Windows/Linux compatibility
+        if (/[<>:"/\\|?*]/.test(newName)) {
+            return res.status(400).json({ error: 'Name contains invalid characters' });
+        }
+
+        FileModel.findById(id, (err, file) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!file) return res.status(404).json({ error: 'File not found' });
+
+            // Check ownership
+            if (file.user_id !== userId) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+
+            const parentDir = path.dirname(file.path);
+            const newPath = path.join(parentDir, newName);
+
+            // Check collision
+            if (fs.existsSync(newPath)) {
+                return res.status(400).json({ error: 'A file or folder with this name already exists' });
+            }
+
+            // Physical Rename
+            fs.rename(file.path, newPath, (err) => {
+                if (err) {
+                    console.error('Rename error:', err);
+                    return res.status(500).json({ error: 'Failed to rename file on disk' });
+                }
+
+                // DB Update
+                FileModel.rename(id, file.path, newName, newPath, file.type, (err) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    res.json({ success: true, newName, newPath });
+                });
+            });
+        });
+    }
+
     // Stream file (Video)
     static stream(req, res) {
         const id = req.params.id;
@@ -350,46 +427,91 @@ class FileController {
             }
 
             const videoSize = fs.statSync(videoPath).size;
-
-            // Allow streaming of common video formats
             const ext = path.extname(file.name).toLowerCase();
-            const mimeTypes = {
+
+            // Formats that browsers natively support (Direct Stream)
+            const directStreamFormats = {
                 '.mp4': 'video/mp4',
                 '.webm': 'video/webm',
-                '.ogg': 'video/ogg',
-                '.mkv': 'video/x-matroska'
+                '.ogg': 'video/ogg'
             };
 
-            const contentType = mimeTypes[ext] || 'application/octet-stream';
+            // Formats that need transcoding
+            const transcodeFormats = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.mpg'];
 
-            // If range is present, send partial content
-            if (range) {
-                const parts = range.replace(/bytes=/, "").split("-");
-                const start = parseInt(parts[0], 10);
-                const CHUNK_SIZE = 10 ** 6; // 1MB
-                let end = parts[1] ? parseInt(parts[1], 10) : videoSize - 1;
-                if (!parts[1]) end = Math.min(start + CHUNK_SIZE, videoSize - 1);
-                const contentLength = end - start + 1;
+            if (transcodeFormats.includes(ext)) {
+                // Transcoding Logic (FFmpeg)
+                const range = req.headers.range;
+                // Note: Range requests with transcoding are complex. 
+                // For this implementation, we will stream the output linearly.
+                // Browsers can still mostly play this, but seeking might be limited depending on the player.
 
-                const headers = {
-                    "Content-Range": `bytes ${start}-${end}/${videoSize}`,
-                    "Accept-Ranges": "bytes",
-                    "Content-Length": contentLength,
-                    "Content-Type": contentType,
-                };
+                res.writeHead(200, {
+                    'Content-Type': 'video/mp4',
+                    'Content-Disposition': `inline; filename="${path.basename(file.name, ext)}.mp4"`
+                });
 
-                res.writeHead(206, headers);
-                const videoStream = fs.createReadStream(videoPath, { start, end });
-                videoStream.pipe(res);
+                const command = ffmpeg(videoPath)
+                    .format('mp4')
+                    .videoCodec('libx264')
+                    .audioCodec('aac')
+                    .outputOptions([
+                        '-movflags frag_keyframe+empty_moov', // Necessary for streaming MP4
+                        '-preset ultrafast', // Low latency
+                        '-b:v 2000k' // Reasonable bitrate, maybe adjust later
+                    ])
+                    .on('error', (err) => {
+                        // Silence error if it's just a broken pipe (client disconnected)
+                        if (err.message !== 'Output stream closed') {
+                            console.error('FFmpeg error:', err);
+                        }
+                    })
+                    .pipe(res, { end: true });
+
+                // Kill ffmpeg if client disconnects
+                req.on('close', () => {
+                    command.kill();
+                });
+
+            } else if (directStreamFormats[ext]) {
+                // Direct Streaming Logic (Existing)
+                const contentType = directStreamFormats[ext];
+
+                if (range) {
+                    const parts = range.replace(/bytes=/, "").split("-");
+                    const start = parseInt(parts[0], 10);
+                    const CHUNK_SIZE = 10 ** 6; // 1MB
+                    let end = parts[1] ? parseInt(parts[1], 10) : videoSize - 1;
+                    if (!parts[1]) end = Math.min(start + CHUNK_SIZE, videoSize - 1);
+                    const contentLength = end - start + 1;
+
+                    const headers = {
+                        "Content-Range": `bytes ${start}-${end}/${videoSize}`,
+                        "Accept-Ranges": "bytes",
+                        "Content-Length": contentLength,
+                        "Content-Type": contentType,
+                    };
+
+                    res.writeHead(206, headers);
+                    const videoStream = fs.createReadStream(videoPath, { start, end });
+                    videoStream.pipe(res);
+                } else {
+                    const headers = {
+                        "Content-Length": videoSize,
+                        "Content-Type": contentType,
+                    };
+                    res.writeHead(200, headers);
+                    fs.createReadStream(videoPath).pipe(res);
+                }
             } else {
-                // No range, send whole file (not ideal for video but fallback)
-                const headers = {
-                    "Content-Length": videoSize,
-                    "Content-Type": contentType,
-                };
-                res.writeHead(200, headers);
-                fs.createReadStream(videoPath).pipe(res);
+                // Fallback for unknown formats
+                res.status(415).send('Unsupported video format');
             }
+
+            // Track access
+            FileModel.updateLastAccessed(id, (err) => {
+                if (err) console.error('Failed to update access time:', err);
+            });
         });
     }
     // Share file

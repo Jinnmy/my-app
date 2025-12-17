@@ -77,6 +77,26 @@ function renderFiles(files) {
         fileCard.dataset.type = file.type;
         fileCard.dataset.name = file.name;
 
+        // Add metadata for tooltip
+        if (file.caption) fileCard.dataset.caption = file.caption;
+        if (file.tags) fileCard.dataset.tags = file.tags; // Assuming tags is a JSON string or we need to parse it? 
+        // Backend says: const tagsStr = tags ? JSON.stringify(tags) : null;
+        // So in the API response `file.tags` should be a JSON string if it came directly from DB.
+        // However, usually API JSON parses it automatically if the content-type is json? 
+        // Wait, SQLite stores it as text. The API sends it as text unless we parse it in controller.
+        // Let's check controller. FileController.list calls FileModel.findByParentId.
+        // FileModel just returns rows. So `tags` is likely a JSON string stringified.
+        // Let's safely handle it. 
+        if (file.tags) {
+            // If it's already an object (e.g. if driver parses JSON types), use it.
+            // But sqlite driver usually returns string for TEXT columns.
+            try {
+                // If it is a string, we set it as is (it's stringified JSON),
+                // The tooltip function will parse it.
+                fileCard.dataset.tags = typeof file.tags === 'string' ? file.tags : JSON.stringify(file.tags);
+            } catch (e) { console.error('Tag error', e); }
+        }
+
         // Determine File Type
         const isImage = file.type === 'file' && /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
         const isVideo = file.type === 'file' && /\.(mp4|webm|ogg|mkv)$/i.test(file.name);
@@ -149,6 +169,11 @@ function renderFiles(files) {
         fileCard.addEventListener('dragover', handleDragOver);
         fileCard.addEventListener('dragleave', handleDragLeave);
         fileCard.addEventListener('drop', handleDrop);
+
+        // Tooltip Events
+        fileCard.addEventListener('mouseenter', (e) => showTooltip(e, fileCard));
+        fileCard.addEventListener('mouseleave', hideTooltip);
+        fileCard.addEventListener('mousemove', moveTooltip);
 
         fileGrid.appendChild(fileCard);
     });
@@ -314,6 +339,7 @@ function formatBytes(bytes, decimals = 2) {
 
 let contextMenuFileId = null;
 let contextMenuFileType = null;
+let contextMenuFileName = null;
 
 function setupContextMenu() {
     const fileGrid = document.getElementById('file-grid');
@@ -322,6 +348,7 @@ function setupContextMenu() {
     const downloadBtn = document.getElementById('ctx-download');
     const moveBtn = document.getElementById('ctx-move');
     const editBtn = document.getElementById('ctx-edit');
+    const renameBtn = document.getElementById('ctx-rename');
     const shareBtn = document.getElementById('ctx-share');
 
     // Context Menu Trigger
@@ -368,6 +395,18 @@ function setupContextMenu() {
         };
     }
 
+    if (renameBtn) {
+        renameBtn.onclick = async () => {
+            if (contextMenuFileId) {
+                const newName = prompt("Enter new name:", contextMenuFileName || ""); // Need to capture name in global or pass it
+                if (newName && newName !== contextMenuFileName) {
+                    await renameFile(contextMenuFileId, newName);
+                }
+                contextMenu.style.display = 'none';
+            }
+        };
+    }
+
     if (editBtn) {
         editBtn.onclick = () => {
             if (contextMenuFileId) {
@@ -395,6 +434,7 @@ function showContextMenu(x, y, id, type, name) {
 
     contextMenuFileId = id;
     contextMenuFileType = type;
+    contextMenuFileName = name;
 
     // Position Menu
     contextMenu.style.top = `${y}px`;
@@ -676,6 +716,29 @@ async function moveFile(fileId, targetParentId) {
     } catch (error) {
         console.error('Move error:', error);
         alert('Failed to move file');
+    }
+}
+
+async function renameFile(fileId, newName) {
+    try {
+        const response = await fetch(`/api/files/rename/${fileId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ newName: newName })
+        });
+
+        if (response.ok) {
+            loadFiles(currentParentId);
+        } else {
+            const err = await response.json();
+            alert(err.error || 'Rename failed');
+        }
+    } catch (e) {
+        console.error('Rename error:', e);
+        alert('Failed to rename item');
     }
 }
 
@@ -983,4 +1046,121 @@ function renderTransfers(transfers) {
 function editFile(id) {
     // Open editor in a new tab/window
     window.open(`/editor.html?id=${id}`, '_blank');
+}
+
+// --- Tooltip Logic ---
+
+let tooltipEl = null;
+
+function createTooltip() {
+    if (tooltipEl) return;
+    tooltipEl = document.createElement('div');
+    tooltipEl.id = 'file-tooltip';
+    tooltipEl.className = 'file-tooltip';
+    tooltipEl.style.display = 'none';
+    document.body.appendChild(tooltipEl);
+}
+
+function showTooltip(e, card) {
+    if (!tooltipEl) createTooltip();
+
+    const name = card.dataset.name;
+    const caption = card.dataset.caption;
+    const tagsRaw = card.dataset.tags;
+
+    // Only show if we have interesting info (caption or tags), or maybe always?
+    if (!caption && !tagsRaw) return;
+
+    let html = `<div class="tooltip-header">${name}</div>`;
+
+    if (caption) {
+        html += `<div class="tooltip-caption">${caption}</div>`;
+    }
+
+    if (tagsRaw) {
+        try {
+            const tags = JSON.parse(tagsRaw);
+            if (Array.isArray(tags) && tags.length > 0) {
+                html += `<div class="tooltip-tags">`;
+                tags.forEach(tag => {
+                    html += `<span class="tooltip-tag">${tag}</span>`;
+                });
+                html += `</div>`;
+            }
+        } catch (e) {
+            console.error('Failed to parse tags for tooltip', e);
+        }
+    }
+
+    tooltipEl.innerHTML = html;
+    tooltipEl.style.display = 'block';
+
+    // Position initial
+    moveTooltip(e);
+}
+
+function hideTooltip() {
+    if (tooltipEl) {
+        tooltipEl.style.display = 'none';
+    }
+}
+
+function moveTooltip(e) {
+    if (!tooltipEl || tooltipEl.style.display === 'none') return;
+
+    // Offset from cursor
+    const offset = 15;
+    const padding = 10; // Edge padding
+
+    const tooltipRect = tooltipEl.getBoundingClientRect();
+    const tooltipW = tooltipRect.width;
+    const tooltipH = tooltipRect.height;
+
+    // Viewport dimensions
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+
+    // Default Position (Bottom-Right of cursor)
+    // using clientX/Y because position is fixed
+    let left = e.clientX + offset;
+    let top = e.clientY + offset;
+
+    // Horizontal Checks
+    if (left + tooltipW > viewportW - padding) {
+        // Try Left of cursor
+        let tryLeft = e.clientX - tooltipW - offset;
+        if (tryLeft < padding) {
+            // If neither fits well, just pin to right edge or left edge? 
+            // Pin to right edge
+            left = viewportW - tooltipW - padding;
+        } else {
+            left = tryLeft;
+        }
+    }
+
+    // Vertical Checks
+    if (top + tooltipH > viewportH - padding) {
+        // Try Top of cursor
+        let tryTop = e.clientY - tooltipH - offset;
+        if (tryTop < padding) {
+            // If neither fits (e.g. tooltip is taller than cursor pos either way),
+            // Pin to bottom or top.
+            // Since we have max-height: 80vh, it should theoretically fit somewhere.
+            // Let's bias towards keeping it fully visible.
+
+            // Try formatting to fit best available space
+            if (e.clientY > viewportH / 2) {
+                // Cursor is in bottom half, force top (pinned to bottom margin) or just top of cursor
+                top = Math.max(padding, tryTop);
+            } else {
+                // Cursor in top half, force bottom
+                top = Math.min(viewportH - tooltipH - padding, top);
+            }
+        } else {
+            top = tryTop;
+        }
+    }
+
+    tooltipEl.style.left = `${left}px`;
+    tooltipEl.style.top = `${top}px`;
 }

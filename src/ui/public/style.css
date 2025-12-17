@@ -315,7 +315,8 @@ body {
     overflow-y: auto;
 }
 
-.file-grid {
+.file-grid,
+.recent-files-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 1.5rem;
@@ -850,4 +851,50 @@ body {
     text-align: center;
     color: #818384;
     font-style: italic;
+}
+
+/* File Tooltip */
+.file-tooltip {
+    position: fixed;
+    background: rgba(15, 23, 42, 0.95);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 12px;
+    color: white;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+    pointer-events: none;
+    /* Let clicks pass through */
+    max-width: 300px;
+    font-size: 0.9rem;
+    animation: fadeIn 0.15s ease-out;
+}
+
+.tooltip-header {
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: var(--primary-color);
+}
+
+.tooltip-caption {
+    font-size: 0.85rem;
+    color: var(--text-color);
+    margin-bottom: 8px;
+    line-height: 1.4;
+}
+
+.tooltip-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.tooltip-tag {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
 }

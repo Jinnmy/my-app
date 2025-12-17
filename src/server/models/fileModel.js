@@ -40,6 +40,11 @@ const initFileTable = () => {
             db.run(tagsSql, (err) => {
                 if (!err) console.log('Added tags column to files table.');
             });
+            // Migration: Add last_accessed_at column
+            const lastAccessSql = `ALTER TABLE files ADD COLUMN last_accessed_at DATETIME`;
+            db.run(lastAccessSql, (err) => {
+                if (!err) console.log('Added last_accessed_at column to files table.');
+            });
         }
     });
 
@@ -67,7 +72,7 @@ initFileTable();
 class FileModel {
     static create(file, callback) {
         const { name, path: filePath, type, size, parent_id, user_id, caption, tags } = file;
-        const sql = `INSERT INTO files (name, path, type, size, parent_id, user_id, caption, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+        const sql = `INSERT INTO files (name, path, type, size, parent_id, user_id, caption, tags, last_accessed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
         const tagsStr = tags ? JSON.stringify(tags) : null;
 
         db.run(sql, [name, filePath, type, size, parent_id, user_id, caption, tagsStr], function (err) {
@@ -168,6 +173,30 @@ class FileModel {
         });
     }
 
+    static rename(id, oldPath, newName, newPath, type, callback) {
+        // 1. Rename the item itself
+        const sql = `UPDATE files SET name = ?, path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+        db.run(sql, [newName, newPath, id], function (err) {
+            if (err) return callback(err);
+
+            // 2. If it is a folder, update all children paths
+            if (type === 'folder') {
+                // SQLite concatenation operator is ||
+                // We want to replace the start of the path for all children
+                const updateChildrenSql = `
+                    UPDATE files 
+                    SET path = ? || SUBSTR(path, LENGTH(?) + 1) 
+                    WHERE path LIKE ? || '%'
+                `;
+                db.run(updateChildrenSql, [newPath, oldPath, oldPath], (err) => {
+                    callback(err);
+                });
+            } else {
+                callback(null);
+            }
+        });
+    }
+
     static search(userId, query, type, callback) {
         let sql = `SELECT * FROM files WHERE user_id = ? AND (name LIKE ? OR caption LIKE ? OR tags LIKE ?)`;
         const wildcard = `%${query}%`;
@@ -213,6 +242,37 @@ class FileModel {
             WHERE sf.file_id = ?
         `;
         db.all(sql, [fileId], (err, rows) => callback(err, rows));
+    }
+
+    // Track Access
+    static updateLastAccessed(id, callback) {
+        const sql = `UPDATE files SET last_accessed_at = CURRENT_TIMESTAMP WHERE id = ?`;
+        db.run(sql, [id], function (err) {
+            callback(err);
+        });
+    }
+
+    static findRecentlyAccessed(userId, limit, callback) {
+        // Find files accessed by user (owned) or shared?
+        // Let's focus on owned files for now, or broadly "files I have access to" that were recently accessed.
+        // It's tricky if we don't track *who* accessed it in a separate table (access_logs). 
+        // Currently 'last_accessed_at' is on the file itself.
+        // So updateLastAccessed updates it for EVERYONE.
+        // This means if I share a file and you read it, it becomes "recently accessed" for ME too.
+        // For a simple NAS, this is acceptable. 
+        // We will just filter by user_id to show "My Recently Accessed" (files I own that were accessed).
+        // OR we can join with shared_files.
+        // Given the constraints, let's show files the user OWNS that were recently accessed.
+
+        const sql = `
+            SELECT * FROM files 
+            WHERE user_id = ? AND last_accessed_at IS NOT NULL
+            ORDER BY last_accessed_at DESC 
+            LIMIT ?
+        `;
+        db.all(sql, [userId, limit], (err, rows) => {
+            callback(err, rows);
+        });
     }
 }
 

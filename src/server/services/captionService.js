@@ -1,5 +1,6 @@
 const { execFile } = require('child_process');
 const path = require('path');
+const nlp = require('compromise');
 
 // Configure paths
 // Ensure python is in path or specify absolute path
@@ -42,26 +43,24 @@ class CaptionService {
 
     /**
      * Simple tag generation from caption.
-     * Extracts nouns/adjectives or just splits by space and filters common words.
+     * Extracts nouns/adjectives using NLP to avoid noise.
      * @param {string} caption 
      * @returns {string[]}
      */
     static generateTags(caption) {
         if (!caption) return [];
 
-        // Basic stop words to filter out
-        const stopWords = new Set(['a', 'an', 'the', 'is', 'are', 'was', 'were', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by']);
+        const doc = nlp(caption);
 
-        // Cleanup and split
-        const words = caption.toLowerCase()
-            .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "")
-            .split(/\s+/);
+        // Extract nouns & adjectives only
+        const nouns = doc.nouns().out('array');
+        const adjectives = doc.adjectives().out('array');
 
-        // Filter
-        const tags = words.filter(w => !stopWords.has(w) && w.length > 2);
+        const tags = [...nouns, ...adjectives]
+            .map(w => w.toLowerCase())
+            .filter(w => w.length > 2);
 
-        // Deduplicate
-        return [...new Set(tags)];
+        return [...new Set(tags)].slice(0, 5);
     }
 }
 

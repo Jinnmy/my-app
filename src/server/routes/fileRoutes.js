@@ -41,6 +41,7 @@ const verifyToken = require('../middleware/authMiddleware');
 const upload = multer({ storage: storage });
 
 router.get('/', verifyToken, FileController.list);
+router.get('/recent', verifyToken, FileController.getRecentlyAccessed);
 router.get('/search', verifyToken, FileController.search);
 router.post('/folder', verifyToken, FileController.createFolder);
 // Note: Frontend must send 'parentId' BEFORE 'file' in the FormData for req.body.parentId to be available here.
@@ -50,6 +51,7 @@ router.post('/folder', verifyToken, FileController.createFolder);
 router.post('/upload', verifyToken, upload.single('file'), FileController.uploadFile);
 router.get('/download/:id', verifyToken, FileController.download);
 router.put('/move/:id', verifyToken, FileController.move);
+router.put('/rename/:id', verifyToken, FileController.rename);
 router.delete('/:id', verifyToken, FileController.delete);
 router.get('/stream/:id', verifyToken, FileController.stream);
 

@@ -6,6 +6,9 @@ window.initUsersPage = function () {
     const closeModalBtn = document.querySelector('.close-modal');
     const cancelBtn = document.querySelector('.close-modal-btn');
     const modalTitle = document.getElementById('user-modal-title');
+    const storageSlider = document.getElementById('storage_limit_slider');
+    const storageInput = document.getElementById('storage_limit');
+    const maxStorageDisplay = document.getElementById('max-storage-display');
     const token = localStorage.getItem('token');
     const user = JSON.parse(localStorage.getItem('user') || '{}');
 
@@ -16,6 +19,85 @@ window.initUsersPage = function () {
         // Better: trigger router to go home
         if (window.loadPage) window.loadPage('dashboard-home');
         return;
+    }
+
+    // Storage Slider Logic
+    const BYTES_PER_GB = 1073741824;
+
+    function setupStorageSlider(currentLimit = 0) {
+        // Reset to default safe state first
+        storageSlider.min = 0;
+
+        // Convert input currentLimit (bytes) to GB for display
+        const currentLimitGB = Math.floor((currentLimit || 0) / BYTES_PER_GB);
+
+        storageSlider.value = currentLimitGB;
+        storageInput.value = currentLimitGB;
+
+        fetch('/api/system/stats', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        })
+            .then(res => res.json())
+            .then(stats => {
+                // Max allowed is current limit + available unallocated space
+                // 'available' from API is TotalDisk - TotalAllocated
+                const availableUnallocated = stats.available || 0;
+
+                // Calculate max available for this user in GB
+                // We add current limit (bytes) + available unallocated (bytes) then convert to GB
+                const maxTotalBytes = availableUnallocated + (currentLimit || 0);
+                const maxAllowedGB = Math.floor(maxTotalBytes / BYTES_PER_GB);
+
+                storageSlider.max = maxAllowedGB;
+
+                // Set initial value in GB
+                let initValGB = currentLimitGB;
+                if (!initValGB && initValGB !== 0) initValGB = 10; // Default 10GB for new
+                if (initValGB > maxAllowedGB) initValGB = maxAllowedGB;
+
+                storageSlider.value = initValGB;
+                storageInput.value = initValGB;
+                storageInput.max = maxAllowedGB; // Also constrain the number input
+
+                maxStorageDisplay.textContent = `Max available: ${maxAllowedGB} GB`;
+            })
+            .catch(err => {
+                console.error("Failed to fetch storage stats", err);
+                maxStorageDisplay.textContent = "Error fetching storage info";
+            });
+    }
+
+    // Sync Slider & Input
+    if (storageSlider && storageInput) {
+        storageSlider.addEventListener('input', () => {
+            storageInput.value = storageSlider.value;
+        });
+
+        storageInput.addEventListener('input', () => {
+            let val = parseFloat(storageInput.value) || 0;
+            const max = parseFloat(storageInput.max) || Infinity;
+            if (val > max) {
+                // optionally clamp, but maybe just let them type and handle validation later?
+                // Clamping while typing is annoying. Let's just update slider if within range.
+            }
+            if (val >= 0 && val <= max) {
+                storageSlider.value = val;
+            }
+        });
+
+        // Clamp on blur
+        storageInput.addEventListener('blur', () => {
+            let val = parseFloat(storageInput.value) || 0;
+            const max = parseFloat(storageInput.max) || Infinity;
+            if (val > max) {
+                storageInput.value = max;
+                storageSlider.value = max;
+            }
+            if (val < 0) {
+                storageInput.value = 0;
+                storageSlider.value = 0;
+            }
+        });
     }
 
     // Helper to format bytes
@@ -78,6 +160,10 @@ window.initUsersPage = function () {
             document.getElementById('user-id').value = '';
             document.getElementById('password').required = true;
             document.getElementById('password').placeholder = '';
+
+            // Setup slider for new user (current limit 0)
+            setupStorageSlider(0); // Init with 0, will default to 10GB in setup
+
             userModal.classList.add('active');
         });
     }
@@ -92,10 +178,12 @@ window.initUsersPage = function () {
         document.getElementById('username').value = user.username;
         document.getElementById('email').value = user.email;
         document.getElementById('role').value = user.role;
-        document.getElementById('storage_limit').value = user.storage_limit;
+        // document.getElementById('storage_limit').value = user.storage_limit; // Handled by slider setup
 
         document.getElementById('password').required = false;
         document.getElementById('password').placeholder = 'Leave blank to keep unchanged';
+
+        setupStorageSlider(user.storage_limit);
 
         userModal.classList.add('active');
     }
@@ -119,7 +207,9 @@ window.initUsersPage = function () {
                 username: document.getElementById('username').value,
                 email: document.getElementById('email').value,
                 role: document.getElementById('role').value,
-                storage_limit: document.getElementById('storage_limit').value,
+                role: document.getElementById('role').value,
+                // storage_limit comes in as GB from input, convert to bytes
+                storage_limit: (parseInt(document.getElementById('storage_limit').value) || 0) * BYTES_PER_GB,
             };
 
             const password = document.getElementById('password').value;

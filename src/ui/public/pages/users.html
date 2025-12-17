@@ -55,9 +55,19 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label for="storage_limit">Storage Limit (Bytes)</label>
-                    <input type="number" id="storage_limit" name="storage_limit" value="10737418240">
-                    <small>Default: 10GB (10737418240)</small>
+                    <label for="storage_limit">Storage Limit (GB)</label>
+                    <div class="storage-input-group" style="display: flex; gap: 10px; align-items: center;">
+                        <div style="flex: 1;">
+                            <input type="range" id="storage_limit_slider" min="0" step="1" style="width: 100%;">
+                            <div
+                                style="display: flex; justify-content: space-between; font-size: 0.8em; color: var(--text-secondary);">
+                                <span>0</span>
+                                <span id="max-storage-display">Max: Calculating...</span>
+                            </div>
+                        </div>
+                        <input type="number" id="storage_limit" name="storage_limit" value="10737418240"
+                            style="width: 120px;">
+                    </div>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn secondary close-modal-btn">Cancel</button>

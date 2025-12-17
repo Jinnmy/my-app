@@ -2,6 +2,7 @@ const { exec } = require('child_process');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const UserModel = require('../models/userModel');
 let electronApp = null;
 
 const setElectronApp = (app) => {
@@ -303,6 +304,89 @@ const systemController = {
         } catch (error) {
             console.error('RAID Setup Error:', error);
             res.status(500).json({ error: 'Failed to configure storage: ' + error.message });
+        }
+    },
+
+    getStorageStats: async (req, res) => {
+        try {
+            const configPath = path.join(__dirname, '../config/storage.json');
+
+            // Check if config exists
+            if (!fs.existsSync(configPath)) {
+                return res.json({ total: 0, free: 0, used: 0, unconfigured: true });
+            }
+
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            const volumePath = config.volumePath;
+
+            if (!volumePath) {
+                return res.json({ total: 0, free: 0, used: 0, unconfigured: true });
+            }
+
+            if (os.platform() === 'win32') {
+                // Clean up volume path for Get-Volume (e.g., "D:\" -> "D")
+                const driveLetter = volumePath.replace(':\\', '').replace(':', '');
+
+                const cmd = `
+                    $ErrorActionPreference = 'Stop'
+                    try {
+                        $v = Get-Volume -DriveLetter "${driveLetter}"
+                        $result = @{
+                            Total = $v.Size
+                            Free = $v.SizeRemaining
+                        }
+                        $result | ConvertTo-Json
+                    } catch {
+                         Write-Error $_
+                    }
+                 `;
+
+                const output = await runPowerShell(cmd);
+                if (!output) throw new Error("No output from storage stats check");
+
+                const stats = JSON.parse(output);
+                const totalDiskSize = stats.Total;
+
+                // Logic Update: Max Available = Total Disk - Total Allocated
+                // We ignore the actual "Free" space for the purpose of LIMITS, 
+                // though we still return it if needed for other UI.
+
+                UserModel.getTotalAllocation((err, totalAllocated) => {
+                    if (err) {
+                        console.error('Error fetching total allocation:', err);
+                        // Fallback to strict free space if db fails
+                        return res.json({
+                            total: totalDiskSize,
+                            free: stats.Free,
+                            allocated: 0,
+                            available: stats.Free
+                        });
+                    }
+
+                    // Available for new allocation = Total Capacity - Already Allocated
+                    const availableForAllocation = totalDiskSize - (totalAllocated || 0);
+
+                    res.json({
+                        total: totalDiskSize,
+                        free: stats.Free, // Actual free space on disk
+                        allocated: totalAllocated || 0,
+                        available: availableForAllocation > 0 ? availableForAllocation : 0
+                    });
+                });
+
+            } else {
+                // Mock for non-windows
+                res.json({
+                    total: 100000000000,
+                    free: 45000000000,
+                    allocated: 50000000000,
+                    available: 50000000000
+                });
+            }
+
+        } catch (error) {
+            console.error('Error fetching storage stats:', error);
+            res.status(500).json({ error: 'Failed to fetch storage stats' });
         }
     }
 };
