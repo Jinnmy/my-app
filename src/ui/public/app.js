@@ -211,9 +211,9 @@ async function loadComponent(path, targetId) {
 async function loadPage(pageName) {
     window.currentPage = pageName;
 
-    // Check environment (Electron) and restrict Files page
-    if (pageName === 'files' && window.electronAPI && window.electronAPI.isElectron) {
-        console.log('Files page is restricted in Electron app');
+    // Check environment (Electron) and restrict Files/Trash page
+    if ((pageName === 'files' || pageName === 'trash') && window.electronAPI && window.electronAPI.isElectron) {
+        console.log('Files/Trash page is restricted in Electron app');
         // Redirect to dashboard or show error? Let's redirect to dashboard
         return loadPage('dashboard-home');
     }
@@ -239,6 +239,8 @@ async function loadPage(pageName) {
             if (user) updateUserDisplay(user);
         } else if (pageName === 'settings') {
             if (window.initSettingsPage) await window.initSettingsPage();
+        } else if (pageName === 'trash') {
+            if (window.initTrashPage) await window.initTrashPage();
         }
 
         // Update active state in sidebar
@@ -270,11 +272,11 @@ function updateActiveNavLink(pageName) {
         if ((item.dataset.page === 'users' || item.dataset.page === 'settings') && user.role !== 'admin') {
             item.style.display = 'none';
         } else {
-            // New check: Hide Files link if in Electron
-            if (item.dataset.page === 'files' && window.electronAPI && window.electronAPI.isElectron) {
+            // New check: Hide Files and Trash link if in Electron
+            if ((item.dataset.page === 'files' || item.dataset.page === 'trash') && window.electronAPI && window.electronAPI.isElectron) {
                 item.style.display = 'none';
             } else {
-                if (item.dataset.page === 'users' || item.dataset.page === 'settings') item.style.display = 'flex'; // Ensure visible for admin
+                item.style.display = 'flex'; // Ensure visible
             }
         }
 

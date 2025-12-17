@@ -45,6 +45,16 @@ const initFileTable = () => {
             db.run(lastAccessSql, (err) => {
                 if (!err) console.log('Added last_accessed_at column to files table.');
             });
+
+            // Migration: Add soft delete columns
+            const isDeletedSql = `ALTER TABLE files ADD COLUMN is_deleted INTEGER DEFAULT 0`;
+            db.run(isDeletedSql, (err) => {
+                if (!err) console.log('Added is_deleted column to files table.');
+            });
+            const trashedAtSql = `ALTER TABLE files ADD COLUMN trashed_at DATETIME`;
+            db.run(trashedAtSql, (err) => {
+                if (!err) console.log('Added trashed_at column to files table.');
+            });
         }
     });
 
@@ -88,7 +98,7 @@ class FileModel {
     }
 
     static findByPath(path, callback) {
-        const sql = `SELECT * FROM files WHERE path = ?`;
+        const sql = `SELECT * FROM files WHERE path = ? AND (is_deleted = 0 OR is_deleted IS NULL)`;
         db.get(sql, [path], (err, row) => {
             callback(err, row);
         });
@@ -117,12 +127,12 @@ class FileModel {
             db.get(checkShare, [parentId, userId], (err, row) => {
                 if (row) {
                     // Parent is shared, so list its children
-                    sql = `SELECT * FROM files WHERE parent_id = ?`;
+                    sql = `SELECT * FROM files WHERE parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)`;
                     db.all(sql, [parentId], (err, rows) => callback(err, rows));
                 } else {
                     // Parent not shared explicitly, check ownership.
                     // If user owns parent, they see files.
-                    sql = `SELECT * FROM files WHERE user_id = ? AND parent_id = ?`;
+                    sql = `SELECT * FROM files WHERE user_id = ? AND parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)`;
                     db.all(sql, [userId, parentId], (err, rows) => callback(err, rows));
                 }
             });
@@ -136,13 +146,13 @@ class FileModel {
 
             sql = `
                 SELECT f.*, 'owner' as role FROM files f 
-                WHERE f.user_id = ? AND f.parent_id IS NULL
+                WHERE f.user_id = ? AND f.parent_id IS NULL AND (f.is_deleted = 0 OR f.is_deleted IS NULL)
                 
                 UNION
                 
                 SELECT f.*, sf.permission as role FROM files f
                 JOIN shared_files sf ON f.id = sf.file_id
-                WHERE sf.user_id = ?
+                WHERE sf.user_id = ? AND (f.is_deleted = 0 OR f.is_deleted IS NULL)
             `;
             params = [userId, userId];
 
@@ -200,7 +210,7 @@ class FileModel {
     }
 
     static search(userId, query, type, callback) {
-        let sql = `SELECT * FROM files WHERE user_id = ? AND (name LIKE ? OR caption LIKE ? OR tags LIKE ?)`;
+        let sql = `SELECT * FROM files WHERE user_id = ? AND (name LIKE ? OR caption LIKE ? OR tags LIKE ?) AND (is_deleted = 0 OR is_deleted IS NULL)`;
         const wildcard = `%${query}%`;
         const params = [userId, wildcard, wildcard, wildcard];
 
@@ -215,9 +225,38 @@ class FileModel {
     }
 
     static delete(id, callback) {
+        // Soft Delete
+        const sql = `UPDATE files SET is_deleted = 1, trashed_at = CURRENT_TIMESTAMP WHERE id = ?`;
+        db.run(sql, [id], function (err) {
+            callback(err, this.changes);
+        });
+    }
+
+    static restore(id, callback) {
+        const sql = `UPDATE files SET is_deleted = 0, trashed_at = NULL WHERE id = ?`;
+        db.run(sql, [id], function (err) {
+            callback(err, this.changes);
+        });
+    }
+
+    static permanentDelete(id, callback) {
         const sql = `DELETE FROM files WHERE id = ?`;
         db.run(sql, [id], function (err) {
             callback(err, this.changes);
+        });
+    }
+
+    static findTrashed(userId, callback) {
+        const sql = `SELECT * FROM files WHERE user_id = ? AND is_deleted = 1 ORDER BY trashed_at DESC`;
+        db.all(sql, [userId], (err, rows) => {
+            callback(err, rows);
+        });
+    }
+
+    static deleteOldTrash(days, callback) {
+        const sql = `DELETE FROM files WHERE is_deleted = 1 AND trashed_at < datetime('now', '-' || ? || ' days')`;
+        db.run(sql, [days], function (err) {
+            if (callback) callback(err, this.changes);
         });
     }
 
@@ -246,6 +285,13 @@ class FileModel {
         db.all(sql, [fileId], (err, rows) => callback(err, rows));
     }
 
+    static isSharedWith(fileId, userId, callback) {
+        const sql = `SELECT 1 FROM shared_files WHERE file_id = ? AND user_id = ?`;
+        db.get(sql, [fileId, userId], (err, row) => {
+            callback(err, !!row);
+        });
+    }
+
     // Track Access
     static updateLastAccessed(id, callback) {
         const sql = `UPDATE files SET last_accessed_at = CURRENT_TIMESTAMP WHERE id = ?`;
@@ -268,7 +314,7 @@ class FileModel {
 
         const sql = `
             SELECT * FROM files 
-            WHERE user_id = ? AND last_accessed_at IS NOT NULL
+            WHERE user_id = ? AND last_accessed_at IS NOT NULL AND (is_deleted = 0 OR is_deleted IS NULL)
             ORDER BY last_accessed_at DESC 
             LIMIT ?
         `;

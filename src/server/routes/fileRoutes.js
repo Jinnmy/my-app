@@ -41,6 +41,7 @@ const verifyToken = require('../middleware/authMiddleware');
 const upload = multer({ storage: storage });
 
 router.get('/', verifyToken, FileController.list);
+router.get('/trash', verifyToken, FileController.getTrashed); // Must be before /:id
 router.get('/recent', verifyToken, FileController.getRecentlyAccessed);
 router.get('/search', verifyToken, FileController.search);
 router.post('/folder', verifyToken, FileController.createFolder);
@@ -53,6 +54,8 @@ router.get('/download/:id', verifyToken, FileController.download);
 router.put('/move/:id', verifyToken, FileController.move);
 router.put('/rename/:id', verifyToken, FileController.rename);
 router.put('/metadata/:id', verifyToken, FileController.updateMetadata);
+router.put('/restore/:id', verifyToken, FileController.restore);
+router.delete('/permanent/:id', verifyToken, FileController.permanentDelete);
 router.delete('/:id', verifyToken, FileController.delete);
 router.get('/stream/:id', verifyToken, FileController.stream);
 

@@ -1,0 +1,59 @@
+<div class="files-container">
+    <div class="files-toolbar">
+        <div class="breadcrumbs" id="trash-breadcrumbs">
+            <span class="breadcrumb-item active">Recently Deleted</span>
+        </div>
+        <div class="files-actions">
+            <button class="btn-secondary" id="btn-empty-trash" style="display: none;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                </svg>
+                Empty Trash
+            </button>
+        </div>
+    </div>
+
+    <div class="files-content-area">
+        <div id="trash-loading" class="files-state">
+            <div class="spinner"></div>
+            <p>Loading deleted files...</p>
+        </div>
+
+        <div id="trash-empty-state" class="files-state" style="display: none;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+                class="empty-icon">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2-2v2"></path>
+            </svg>
+            <p>Trash is empty</p>
+        </div>
+
+        <div id="trash-grid" class="file-grid">
+            <!-- Trashed Files will be injected here -->
+        </div>
+    </div>
+
+    <div id="trash-context-menu" class="context-menu">
+        <div class="context-menu-item" id="ctx-restore">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 14 4 9 9 4"></polyline>
+                <path d="M20 20v-7a4 4 0 0 0-4-4H4"></path>
+            </svg>
+            Restore
+        </div>
+        <div class="context-menu-item delete" id="ctx-delete-forever">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+            Delete Forever
+        </div>
+    </div>
+</div>

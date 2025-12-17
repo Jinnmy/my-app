@@ -201,86 +201,114 @@ class FileController {
                 if (err) return res.status(500).json({ error: err.message });
                 if (!file) return res.status(404).json({ error: 'File not found' });
 
-                // Check ownership
-                if (file.user_id !== userId) {
-                    return res.status(403).json({ error: 'Access denied' });
-                }
+                // Check ownership or Shared Access
+                const proceedDownload = () => {
+                    if (file.type === 'folder') {
+                        return res.status(400).json({ error: 'Cannot download folders yet' });
+                    }
 
-                if (file.type === 'folder') {
-                    return res.status(400).json({ error: 'Cannot download folders yet' });
-                }
+                    if (!fs.existsSync(file.path)) {
+                        return res.status(404).json({ error: 'File not found on disk' });
+                    }
 
-                if (!fs.existsSync(file.path)) {
-                    return res.status(404).json({ error: 'File not found on disk' });
-                }
+                    // Detect mime type for images to allow inline preview
+                    const ext = path.extname(file.name).toLowerCase();
+                    const mimeTypes = {
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.png': 'image/png',
+                        '.gif': 'image/gif',
+                        '.webp': 'image/webp',
+                        '.svg': 'image/svg+xml'
+                    };
 
-                // Detect mime type for images to allow inline preview
-                const ext = path.extname(file.name).toLowerCase();
-                const mimeTypes = {
-                    '.jpg': 'image/jpeg',
-                    '.jpeg': 'image/jpeg',
-                    '.png': 'image/png',
-                    '.gif': 'image/gif',
-                    '.webp': 'image/webp',
-                    '.svg': 'image/svg+xml'
+                    const mimeType = mimeTypes[ext];
+
+                    if (mimeType) {
+                        // Send as inline to display in browser
+                        res.setHeader('Content-Type', mimeType);
+                        res.setHeader('Content-Disposition', `inline; filename="${file.name}"`);
+                        const stream = fs.createReadStream(file.path);
+                        stream.pipe(res);
+                    } else {
+                        // Force download for other files
+                        res.download(file.path, file.name, (err) => {
+                            if (err) {
+                                console.error('Download error:', err);
+                                if (!res.headersSent) {
+                                    res.status(500).send('Could not download file');
+                                }
+                            } else {
+                                // Track access on successful download
+                                FileModel.updateLastAccessed(id, (err) => {
+                                    if (err) console.error('Failed to update access time:', err);
+                                });
+                            }
+                        });
+                    }
+
+                    // If inline (pipe), we also want to track access. 
+                    if (mimeType) {
+                        FileModel.updateLastAccessed(id, (err) => {
+                            if (err) console.error('Failed to update access time:', err);
+                        });
+                    }
                 };
 
-                const mimeType = mimeTypes[ext];
-
-                if (mimeType) {
-                    // Send as inline to display in browser
-                    res.setHeader('Content-Type', mimeType);
-                    res.setHeader('Content-Disposition', `inline; filename="${file.name}"`);
-                    const stream = fs.createReadStream(file.path);
-                    stream.pipe(res);
+                if (file.user_id === userId) {
+                    proceedDownload();
                 } else {
-                    // Force download for other files
-                    res.download(file.path, file.name, (err) => {
-                        if (err) {
-                            console.error('Download error:', err);
-                            if (!res.headersSent) {
-                                res.status(500).send('Could not download file');
-                            }
-                        } else {
-                            // Track access on successful download
-                            FileModel.updateLastAccessed(id, (err) => {
-                                if (err) console.error('Failed to update access time:', err);
-                            });
-                        }
-                    });
-                }
-
-                // If inline (pipe), we also want to track access. 
-                // Pipe doesn't give a clear formatting "finish" callback easily on 'res' 
-                // but we can assume if we started piping, it's being accessed.
-                if (mimeType) {
-                    FileModel.updateLastAccessed(id, (err) => {
-                        if (err) console.error('Failed to update access time:', err);
+                    FileModel.isSharedWith(id, userId, (err, isShared) => {
+                        if (err) return res.status(500).json({ error: err.message });
+                        if (!isShared) return res.status(403).json({ error: 'Access denied' });
+                        proceedDownload();
                     });
                 }
             });
         });
     }
 
-    // Delete file or folder
+    // Soft Delete file or folder
     static delete(req, res) {
         const id = req.params.id;
+        const userId = req.user.id;
 
         FileModel.findById(id, (err, file) => {
             if (err) return res.status(500).json({ error: err.message });
             if (!file) return res.status(404).json({ error: 'File not found' });
+            if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
+
+            // Soft Delete in DB (Do NOT delete from disk yet)
+            FileModel.delete(id, (err) => {
+                if (err) return res.status(500).json({ error: err.message });
+                res.json({ message: 'Moved to trash' });
+            });
+        });
+    }
+
+    // Permanent Delete
+    static permanentDelete(req, res) {
+        const id = req.params.id;
+        const userId = req.user.id;
+
+        FileModel.findById(id, (err, file) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!file) return res.status(404).json({ error: 'File not found' }); // Might need to check trashed items specifically if findById filters them out? 
+            // findById usually filters out deleted items if we updated it? 
+            // Wait, I updated findByPath and others, but did I update findById?
+            // Let's check FileModel. findById: `SELECT * FROM files WHERE id = ?`. It does NOT filter. Good.
+
+            if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
 
             // Remove from filesystem
             fs.rm(file.path, { recursive: true, force: true }, (err) => {
                 if (err) {
                     console.error(`Failed to delete file at ${file.path}:`, err);
-                    // We might still want to delete from DB or return error
-                    // For now, return error
-                    return res.status(500).json({ error: 'Failed to delete file from disk' });
+                    // continue? Yes, inconsistent state otherwise.
                 }
 
-                // Remove from DB
-                FileModel.delete(id, (err) => {
+                // Remove from DB permanently
+                FileModel.permanentDelete(id, (err) => {
                     if (err) return res.status(500).json({ error: err.message });
 
                     // Update User Storage
@@ -289,9 +317,35 @@ class FileController {
                         if (err) console.error('Failed to update storage usage on delete:', err);
                     });
 
-                    res.json({ message: 'Deleted successfully' });
+                    res.json({ message: 'Permanently deleted' });
                 });
             });
+        });
+    }
+
+    // Restore file
+    static restore(req, res) {
+        const id = req.params.id;
+        const userId = req.user.id;
+
+        FileModel.findById(id, (err, file) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!file) return res.status(404).json({ error: 'File not found' });
+            if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
+
+            FileModel.restore(id, (err) => {
+                if (err) return res.status(500).json({ error: err.message });
+                res.json({ message: 'File restored' });
+            });
+        });
+    }
+
+    // Get Trashed Files
+    static getTrashed(req, res) {
+        const userId = req.user.id;
+        FileModel.findTrashed(userId, (err, files) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json(files);
         });
     }
 

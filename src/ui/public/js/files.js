@@ -1293,3 +1293,163 @@ async function saveMetadata(id, name, caption, tags) {
         alert('Error saving metadata');
     }
 }
+
+// --- Trash Page Logic ---
+
+async function initTrashPage() {
+    console.log('Initializing Trash Page');
+    await loadTrashedFiles();
+    setupTrashContextMenu();
+
+    const emptyBtn = document.getElementById('btn-empty-trash');
+    if (emptyBtn) {
+        emptyBtn.style.display = 'none';
+        // Optional: Manual empty trash trigger could go here
+    }
+}
+
+async function loadTrashedFiles() {
+    const fileGrid = document.getElementById('trash-grid');
+    const loadingState = document.getElementById('trash-loading');
+    const emptyState = document.getElementById('trash-empty-state');
+
+    // Safety check if elements exist (in case page load failed partially)
+    if (!fileGrid) return;
+
+    fileGrid.innerHTML = '';
+    fileGrid.style.display = 'none';
+    emptyState.style.display = 'none';
+    loadingState.style.display = 'flex';
+
+    try {
+        const response = await fetch('/api/files/trash', {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        if (!response.ok) throw new Error('Failed to fetch trash');
+        const files = await response.json();
+
+        loadingState.style.display = 'none';
+
+        if (files.length === 0) {
+            emptyState.style.display = 'flex';
+        } else {
+            fileGrid.style.display = 'grid';
+            renderTrashFiles(files);
+        }
+    } catch (error) {
+        console.error('Error loading trash:', error);
+        loadingState.innerHTML = '<p class="error-text">Failed to load trash</p>';
+    }
+}
+
+function renderTrashFiles(files) {
+    const fileGrid = document.getElementById('trash-grid');
+    fileGrid.innerHTML = '';
+
+    files.forEach(file => {
+        const fileCard = document.createElement('div');
+        fileCard.className = 'file-card';
+        fileCard.dataset.id = file.id;
+        fileCard.dataset.name = file.name;
+
+        // Use same icon logic roughly
+        let icon = '';
+        if (file.type === 'folder') {
+            icon = `
+            <svg xmlns="http://www.w3.org/2000/svg" class="file-icon folder-icon" viewBox="0 0 24 24" fill="currentColor" style="opacity: 0.7">
+                <path d="M19.5 21a3 3 0 0 0 3-3v-4.5a3 3 0 0 0-3-3h-15a3 3 0 0 0-3 3V18a3 3 0 0 0 3 3h15ZM1.5 10.146V6a3 3 0 0 1 3-3h5.379a2.25 2.25 0 0 1 1.59.659l2.122 2.121c.14.141.331.22.53.22H19.5a3 3 0 0 1 3 3v1.146A4.483 4.483 0 0 0 19.5 9h-15a4.483 4.483 0 0 0-3 1.146Z" />
+            </svg>`;
+        } else {
+            icon = `
+            <svg xmlns="http://www.w3.org/2000/svg" class="file-icon doc-icon" viewBox="0 0 24 24" fill="currentColor" style="opacity: 0.7">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>`;
+        }
+
+        fileCard.innerHTML = `
+            <div class="file-icon-wrapper">${icon}</div>
+            <div class="file-info">
+                <div class="file-name" title="${file.name}">${file.name}</div>
+                <div class="file-meta">Deleted ${new Date(file.trashed_at).toLocaleDateString()}</div>
+            </div>
+        `;
+
+        // Context menu event
+        fileCard.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            showTrashContextMenu(e.pageX, e.pageY, file.id);
+        });
+
+        fileGrid.appendChild(fileCard);
+    });
+}
+
+let trashContextId = null;
+
+function setupTrashContextMenu() {
+    const contextMenu = document.getElementById('trash-context-menu');
+    const restoreBtn = document.getElementById('ctx-restore');
+    const deleteForeverBtn = document.getElementById('ctx-delete-forever');
+
+    // Global click listener to close is already in setupContextMenu but for the MAIN context menu.
+    // We need one for this one too.
+    document.addEventListener('click', () => {
+        if (contextMenu && contextMenu.style.display === 'block') contextMenu.style.display = 'none';
+    });
+
+    if (restoreBtn) {
+        restoreBtn.onclick = async () => {
+            if (trashContextId) await restoreFile(trashContextId);
+        };
+    }
+
+    if (deleteForeverBtn) {
+        deleteForeverBtn.onclick = async () => {
+            if (trashContextId) {
+                if (confirm('Delete forever? This cannot be undone.')) {
+                    await permanentDeleteFile(trashContextId);
+                }
+            }
+        };
+    }
+}
+
+function showTrashContextMenu(x, y, id) {
+    const contextMenu = document.getElementById('trash-context-menu');
+    if (!contextMenu) return;
+
+    trashContextId = id;
+    contextMenu.style.top = `${y}px`;
+    contextMenu.style.left = `${x}px`;
+    contextMenu.style.display = 'block';
+}
+
+async function restoreFile(id) {
+    try {
+        const response = await fetch(`/api/files/restore/${id}`, {
+            method: 'PUT',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        if (response.ok) {
+            loadTrashedFiles();
+        } else {
+            alert('Failed to restore');
+        }
+    } catch (e) { console.error(e); }
+}
+
+async function permanentDeleteFile(id) {
+    try {
+        const response = await fetch(`/api/files/permanent/${id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+        if (response.ok) {
+            loadTrashedFiles();
+            if (window.updateUserData) window.updateUserData();
+        } else {
+            alert('Failed to delete');
+        }
+    } catch (e) { console.error(e); }
+}

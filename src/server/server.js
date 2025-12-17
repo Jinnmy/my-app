@@ -63,6 +63,16 @@ function startServer(electronAppInstance) {
         }
     });
 
+    // Start Trash Cleanup Job (Run every 24 hours)
+    setInterval(() => {
+        const FileModel = require('./models/fileModel'); // Require inside to ensure DB is ready
+        console.log('Running scheduled trash cleanup...');
+        FileModel.deleteOldTrash(30, (err, changes) => {
+            if (err) console.error('Error cleaning trash:', err);
+            else if (changes > 0) console.log(`Cleaned up ${changes} old files from trash.`);
+        });
+    }, 24 * 60 * 60 * 1000);
+
     server.listen(port, () => {
         console.log(`NAS Server running at http://localhost:${port}`);
     });
