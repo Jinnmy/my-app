@@ -52,6 +52,7 @@ router.post('/upload', verifyToken, upload.single('file'), FileController.upload
 router.get('/download/:id', verifyToken, FileController.download);
 router.put('/move/:id', verifyToken, FileController.move);
 router.put('/rename/:id', verifyToken, FileController.rename);
+router.put('/metadata/:id', verifyToken, FileController.updateMetadata);
 router.delete('/:id', verifyToken, FileController.delete);
 router.get('/stream/:id', verifyToken, FileController.stream);
 

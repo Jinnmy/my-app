@@ -4,7 +4,7 @@
             <span class="breadcrumb-item">My Files</span>
         </div>
         <div class="files-actions">
-            <input type="file" id="file-input-hidden" style="display: none;">
+            <input type="file" id="file-input-hidden" style="display: none;" multiple>
             <button class="btn-secondary" id="btn-new-folder">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -58,13 +58,15 @@
             </svg>
             Edit Document
         </div>
-        <div class="context-menu-item" id="ctx-rename">
+        <div class="context-menu-item" id="ctx-metadata">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
             </svg>
-            Rename
+            Edit Metadata
         </div>
+
         <div class="context-menu-item" id="ctx-share">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -128,6 +130,44 @@
                     style="margin-top: 15px; display: flex; justify-content: flex-end; gap: 10px;">
                     <button class="btn-secondary" id="btn-cancel-move">Cancel</button>
                     <button class="btn-primary" id="btn-confirm-move" disabled>Move Here</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Metadata Modal -->
+    <div id="metadata-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit Metadata</h3>
+                <span class="close-modal" id="close-metadata-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="meta-name" style="display: block; margin-bottom: 5px;">Name</label>
+                    <input type="text" id="meta-name" class="form-input" style="width: 100%;" placeholder="File name">
+                </div>
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="meta-caption" style="display: block; margin-bottom: 5px;">Caption</label>
+                    <textarea id="meta-caption" class="form-input" style="width: 100%; height: 80px; resize: vertical;"
+                        placeholder="Enter caption..."></textarea>
+                </div>
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="meta-tags-input" style="display: block; margin-bottom: 5px;">Tags</label>
+                    <div class="tags-container"
+                        style="display: flex; flex-wrap: wrap; gap: 5px; border: 1px solid #444; padding: 5px; border-radius: 4px; min-height: 40px;">
+                        <div id="meta-tags-list" style="display: contents;">
+                            <!-- Tags injected here -->
+                        </div>
+                        <input type="text" id="meta-tags-input" placeholder="Add tag..."
+                            style="border: none; background: transparent; color: #fff; flex: 1; min-width: 60px; outline: none;">
+                    </div>
+                    <small style="color: #888;">Press Enter to add tag</small>
+                </div>
+                <div class="modal-actions"
+                    style="margin-top: 15px; display: flex; justify-content: flex-end; gap: 10px;">
+                    <button class="btn-secondary" id="btn-cancel-metadata">Cancel</button>
+                    <button class="btn-primary" id="btn-save-metadata">Save</button>
                 </div>
             </div>
         </div>

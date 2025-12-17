@@ -34,6 +34,9 @@ async function initDashboard() {
 
     // Setup Navigation Event Listeners
     setupNavigation();
+
+    // Setup Sidebar Toggle (Mobile)
+    setupSidebarToggle();
 }
 
 async function updateUserData() {
@@ -68,7 +71,31 @@ function updateUserDisplay(user) {
     if (nameDisplay) nameDisplay.textContent = user.username || user.email;
     if (avatarDisplay) avatarDisplay.textContent = (user.username || user.email).charAt(0).toUpperCase();
 
-    // Storage Bar
+    // --- Dashboard Widgets Logic ---
+    // User Stats (Doughnut)
+    const gaugeCircle = document.getElementById('userStorageChart');
+    const gaugeText = document.getElementById('userStoragePercent');
+    const usedText = document.getElementById('userStorageUsed');
+    const totalText = document.getElementById('userStorageTotal');
+
+    if (gaugeCircle && user.storage_limit) {
+        const used = user.used_storage || 0;
+        const limit = user.storage_limit;
+        const percent = Math.min(100, (used / limit) * 100);
+
+        // Update SVG (stroke-dasharray is "filled, gap", total 100)
+        gaugeCircle.setAttribute('stroke-dasharray', `${percent}, 100`);
+
+        // Colors for chart
+        gaugeCircle.style.stroke = percent > 90 ? '#ef4444' : (percent > 75 ? '#f59e0b' : '#3b82f6');
+
+        if (gaugeText) gaugeText.textContent = `${Math.round(percent)}%`;
+        if (usedText) usedText.textContent = formatBytes(used);
+        if (totalText) totalText.textContent = formatBytes(limit);
+    }
+
+    // Topbar storage bar (legacy, keep if topbar element exists)
+    // Storage Bar in Topbar
     const storageContainer = document.getElementById('storageInfoContainer');
     const storageText = document.getElementById('storageText');
     const storageBarFill = document.getElementById('storageBarFill');
@@ -86,6 +113,79 @@ function updateUserDisplay(user) {
         storageBarFill.className = 'storage-bar-fill'; // reset
         if (percent > 90) storageBarFill.classList.add('danger');
         else if (percent > 75) storageBarFill.classList.add('warning');
+    }
+
+    // --- System Stats on Dashboard ---
+    // Check if we are on dashboard home by looking for a unique element
+    if (document.getElementById('mainStorageTotal')) {
+        fetchSystemData();
+    }
+}
+
+async function fetchSystemData() {
+    try {
+        const token = localStorage.getItem('token');
+        const headers = { 'Authorization': `Bearer ${token}` };
+
+        // 1. Storage Stats
+        const storageResp = await fetch('/api/system/stats', { headers });
+        if (storageResp.ok) {
+            const stats = await storageResp.json();
+            const totalEl = document.getElementById('mainStorageTotal');
+            const freeEl = document.getElementById('mainStorageFree');
+            const statusEl = document.getElementById('mainStorageStatus');
+
+            if (totalEl) totalEl.textContent = formatBytes(stats.total);
+            if (freeEl) freeEl.textContent = formatBytes(stats.free);
+            if (statusEl) {
+                // Simple status logic based on free space
+                const percentFree = (stats.free / stats.total) * 100;
+                if (percentFree < 10) {
+                    statusEl.textContent = 'Low Space';
+                    statusEl.className = 'stat-value status-critical';
+                } else {
+                    statusEl.textContent = 'Healthy';
+                    statusEl.className = 'stat-value status-good';
+                }
+            }
+        }
+
+        // 2. Disk Health
+        const diskResp = await fetch('/api/system/disks', { headers });
+        if (diskResp.ok) {
+            const disks = await diskResp.json();
+            const diskList = document.getElementById('diskHealthList');
+            if (diskList) {
+                diskList.innerHTML = '';
+                if (disks.length === 0) {
+                    diskList.innerHTML = '<div class="empty-message">No disks found</div>';
+                }
+                disks.forEach(disk => {
+                    const row = document.createElement('div');
+                    row.className = 'disk-health-row';
+                    const isHealthy = (disk.healthStatus || 'Healthy') === 'Healthy';
+
+                    row.innerHTML = `
+                        <div class="disk-icon ${isHealthy ? 'healthy' : 'issue'}">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 2v16h12V4H6zm2 2h8v2H8V6zm0 4h8v2H8v-2z"/>
+                            </svg>
+                        </div>
+                        <div class="disk-info">
+                            <div class="disk-name">${disk.name || disk.device}</div>
+                             <div class="disk-sub">${disk.mediaType} • ${formatBytes(disk.size)}</div>
+                        </div>
+                        <div class="disk-status">
+                            <span class="status-badge ${isHealthy ? 'good' : 'bad'}">${disk.healthStatus || 'Healthy'}</span>
+                        </div>
+                    `;
+                    diskList.appendChild(row);
+                });
+            }
+        }
+
+    } catch (e) {
+        console.error("Failed to fetch system stats", e);
     }
 }
 
@@ -134,6 +234,9 @@ async function loadPage(pageName) {
             if (window.initUsersPage) await window.initUsersPage();
         } else if (pageName === 'dashboard-home') {
             loadRecentFiles();
+            fetchSystemData();
+            const user = JSON.parse(localStorage.getItem('user'));
+            if (user) updateUserDisplay(user);
         } else if (pageName === 'settings') {
             if (window.initSettingsPage) await window.initSettingsPage();
         }
@@ -385,4 +488,33 @@ function createRecentFileCard(file) {
     }
 
     return fileCard;
+}
+
+function setupSidebarToggle() {
+    const toggleBtn = document.getElementById('sidebarToggle');
+    const sidebar = document.getElementById('sidebar-container');
+    const overlay = document.getElementById('sidebar-overlay');
+
+    if (toggleBtn && sidebar && overlay) {
+        toggleBtn.addEventListener('click', () => {
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('open');
+        });
+
+        overlay.addEventListener('click', () => {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('open');
+        });
+
+        // Close sidebar when a nav item is clicked on mobile
+        const navItems = sidebar.querySelectorAll('.nav-item');
+        navItems.forEach(item => {
+            item.addEventListener('click', () => {
+                if (window.innerWidth <= 768) {
+                    sidebar.classList.remove('open');
+                    overlay.classList.remove('open');
+                }
+            });
+        });
+    }
 }

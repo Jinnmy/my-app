@@ -173,14 +173,16 @@ class FileModel {
         });
     }
 
-    static rename(id, oldPath, newName, newPath, type, callback) {
-        // 1. Rename the item itself
-        const sql = `UPDATE files SET name = ?, path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
-        db.run(sql, [newName, newPath, id], function (err) {
+    static updateDetails(id, name, path, type, oldPath, caption, tags, callback) {
+        // 1. Update the item itself
+        const sql = `UPDATE files SET name = ?, path = ?, caption = ?, tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+        const tagsStr = tags ? JSON.stringify(tags) : null;
+
+        db.run(sql, [name, path, caption, tagsStr, id], function (err) {
             if (err) return callback(err);
 
-            // 2. If it is a folder, update all children paths
-            if (type === 'folder') {
+            // 2. If it is a folder AND path changed, update all children paths
+            if (type === 'folder' && path !== oldPath) {
                 // SQLite concatenation operator is ||
                 // We want to replace the start of the path for all children
                 const updateChildrenSql = `
@@ -188,7 +190,7 @@ class FileModel {
                     SET path = ? || SUBSTR(path, LENGTH(?) + 1) 
                     WHERE path LIKE ? || '%'
                 `;
-                db.run(updateChildrenSql, [newPath, oldPath, oldPath], (err) => {
+                db.run(updateChildrenSql, [path, oldPath, oldPath], (err) => {
                     callback(err);
                 });
             } else {

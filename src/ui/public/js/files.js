@@ -12,6 +12,7 @@ async function initFilesPage() {
     setupFileEventListeners();
     setupContextMenu();
     setupMoveModal();
+    setupMetadataModal();
     setupShareModal();
     setupVideoModal();
     setupTransferPanel();
@@ -136,31 +137,39 @@ function renderFiles(files) {
 
         // Folder Navigation
         if (file.type === 'folder') {
-            fileCard.addEventListener('dblclick', () => {
-                enterFolder(file.id, file.name);
-            });
+            if (file.type === 'folder') {
+                fileCard.addEventListener('click', () => {
+                    enterFolder(file.id, file.name);
+                });
+            }
         }
 
         // Image Preview
         if (isImage) {
-            fileCard.addEventListener('dblclick', () => {
-                const token = localStorage.getItem('token');
-                window.open(`/api/files/download/${file.id}?token=${token}`, '_blank');
-            });
+            if (isImage) {
+                fileCard.addEventListener('click', () => {
+                    const token = localStorage.getItem('token');
+                    window.open(`/api/files/download/${file.id}?token=${token}`, '_blank');
+                });
+            }
         }
 
         // Video Preview
         if (isVideo) {
-            fileCard.addEventListener('dblclick', () => {
-                playVideo(file.id, file.name);
-            });
+            if (isVideo) {
+                fileCard.addEventListener('click', () => {
+                    playVideo(file.id, file.name);
+                });
+            }
         }
 
         // Word Editor
         if (isDocx) {
-            fileCard.addEventListener('dblclick', () => {
-                editFile(file.id);
-            });
+            if (isDocx) {
+                fileCard.addEventListener('click', () => {
+                    editFile(file.id);
+                });
+            }
         }
 
         // Drag and Drop Support
@@ -281,50 +290,57 @@ async function createNewFolder() {
 }
 
 async function handleFileUpload(e) {
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-    const formData = new FormData();
-    if (currentParentId) {
-        formData.append('parentId', currentParentId);
+    // Show Transfer Panel immediately
+    const panel = document.getElementById('transfer-panel');
+    if (panel) {
+        panel.style.display = 'flex';
+        panel.classList.remove('collapsed');
     }
-    formData.append('file', file);
 
-    // Show uploading... (could optimize this UX)
+    // Process all files
+    const uploadPromises = Array.from(files).map(async (file) => {
+        const formData = new FormData();
+        if (currentParentId) {
+            formData.append('parentId', currentParentId);
+        }
+        formData.append('file', file);
+
+        try {
+            const response = await fetch('/api/files/upload', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`
+                },
+                body: formData
+            });
+
+            if (response.ok) {
+                // Success for this file
+                return { success: true, file: file.name };
+            } else {
+                console.error(`Failed to upload ${file.name}`);
+                return { success: false, file: file.name };
+            }
+        } catch (e) {
+            console.error(`Error uploading ${file.name}`, e);
+            return { success: false, file: file.name };
+        }
+    });
 
     try {
-        const response = await fetch('/api/files/upload', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('token')}`
-            },
-            body: formData
-        });
+        await Promise.all(uploadPromises);
 
-        if (response.ok) {
-            const data = await response.json();
-            // console.log('Upload response:', data);
+        // Trigger generic poll to update UI
+        fetchTransfers();
 
-            // Open Transfer Panel if it's the first time
-            const panel = document.getElementById('transfer-panel');
-            if (panel) {
-                panel.style.display = 'flex';
-                panel.classList.remove('collapsed');
-            }
-
-            // Trigger an immediate poll
-            fetchTransfers();
-
-            // Don't reload files immediately as it is async now. 
-            // The polling (or user) will refresh when complete.
-        } else {
-            alert('Upload failed');
-        }
-    } catch (e) {
-        console.error(e);
-        alert('Error uploading file');
-    } finally {
-        e.target.value = ''; // Reset input
+        // Clear input
+        e.target.value = '';
+    } catch (err) {
+        console.error('Batch upload error', err);
+        alert('Some uploads may have failed');
     }
 }
 
@@ -348,8 +364,8 @@ function setupContextMenu() {
     const downloadBtn = document.getElementById('ctx-download');
     const moveBtn = document.getElementById('ctx-move');
     const editBtn = document.getElementById('ctx-edit');
-    const renameBtn = document.getElementById('ctx-rename');
     const shareBtn = document.getElementById('ctx-share');
+    const metadataBtn = document.getElementById('ctx-metadata');
 
     // Context Menu Trigger
     fileGrid.addEventListener('contextmenu', (e) => {
@@ -395,17 +411,7 @@ function setupContextMenu() {
         };
     }
 
-    if (renameBtn) {
-        renameBtn.onclick = async () => {
-            if (contextMenuFileId) {
-                const newName = prompt("Enter new name:", contextMenuFileName || ""); // Need to capture name in global or pass it
-                if (newName && newName !== contextMenuFileName) {
-                    await renameFile(contextMenuFileId, newName);
-                }
-                contextMenu.style.display = 'none';
-            }
-        };
-    }
+
 
     if (editBtn) {
         editBtn.onclick = () => {
@@ -424,7 +430,26 @@ function setupContextMenu() {
             }
         };
     }
+
+    if (metadataBtn) {
+        metadataBtn.onclick = () => {
+            if (contextMenuFileId) {
+                // Get current caption and tags from DOM dataset
+                const fileCard = document.querySelector(`.file-card[data-id="${contextMenuFileId}"]`);
+                const caption = fileCard.dataset.caption || '';
+                let tags = [];
+                try {
+                    tags = fileCard.dataset.tags ? JSON.parse(fileCard.dataset.tags) : [];
+                    if (typeof tags === 'string') tags = JSON.parse(tags);
+                } catch (e) { tags = []; }
+
+                openMetadataModal(contextMenuFileId, contextMenuFileName, caption, tags);
+                contextMenu.style.display = 'none';
+            }
+        };
+    }
 }
+
 
 function showContextMenu(x, y, id, type, name) {
     const contextMenu = document.getElementById('context-menu');
@@ -1163,4 +1188,108 @@ function moveTooltip(e) {
 
     tooltipEl.style.left = `${left}px`;
     tooltipEl.style.top = `${top}px`;
+}
+
+// --- Metadata Modal & Logic ---
+
+let metadataFileId = null;
+let currentTags = [];
+
+function setupMetadataModal() {
+    const modal = document.getElementById('metadata-modal');
+    const closeBtn = document.getElementById('close-metadata-modal');
+    const cancelBtn = document.getElementById('btn-cancel-metadata');
+    const saveBtn = document.getElementById('btn-save-metadata');
+    const tagsInput = document.getElementById('meta-tags-input');
+
+    const closeModal = () => modal.style.display = 'none';
+
+    if (closeBtn) closeBtn.onclick = closeModal;
+    if (cancelBtn) cancelBtn.onclick = closeModal;
+
+    window.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+
+    if (tagsInput) {
+        tagsInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const tag = tagsInput.value.trim();
+                if (tag && !currentTags.includes(tag)) {
+                    currentTags.push(tag);
+                    renderTags();
+                    tagsInput.value = '';
+                }
+            }
+        });
+    }
+
+    if (saveBtn) {
+        saveBtn.onclick = async () => {
+            const name = document.getElementById('meta-name').value;
+            const caption = document.getElementById('meta-caption').value;
+            await saveMetadata(metadataFileId, name, caption, currentTags);
+            closeModal();
+        };
+    }
+}
+
+function openMetadataModal(id, name, caption, tags) {
+    metadataFileId = id;
+    currentTags = Array.isArray(tags) ? [...tags] : []; // copy
+
+    document.getElementById('meta-name').value = name || '';
+    document.getElementById('meta-caption').value = caption || '';
+    renderTags();
+
+    const modal = document.getElementById('metadata-modal');
+    if (modal) modal.style.display = 'block';
+
+    // Auto focus name? Or caption? Name is first.
+    // document.getElementById('meta-name').focus();
+}
+
+function renderTags() {
+    const list = document.getElementById('meta-tags-list');
+    list.innerHTML = '';
+    currentTags.forEach((tag, index) => {
+        const chip = document.createElement('div');
+        chip.style.cssText = 'background: #555; padding: 2px 8px; border-radius: 12px; display: flex; align-items: center; gap: 5px; font-size: 0.9em;';
+        chip.innerHTML = `
+            <span>${tag}</span>
+            <span style="cursor: pointer; font-weight: bold; color: #ccc;" onclick="removeTag(${index})">&times;</span>
+        `;
+        list.appendChild(chip);
+    });
+}
+
+// Make removeTag globally accessible
+window.removeTag = function (index) {
+    currentTags.splice(index, 1);
+    renderTags();
+};
+
+async function saveMetadata(id, name, caption, tags) {
+    try {
+        const response = await fetch(`/api/files/metadata/${id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ name, caption, tags })
+        });
+
+        if (response.ok) {
+            // Refresh files to update dataset and view
+            loadFiles(currentParentId);
+        } else {
+            const err = await response.json();
+            alert(err.error || 'Failed to save metadata');
+        }
+    } catch (e) {
+        console.error(e);
+        alert('Error saving metadata');
+    }
 }

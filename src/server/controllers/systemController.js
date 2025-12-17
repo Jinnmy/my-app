@@ -51,7 +51,7 @@ const systemController = {
                     $ErrorActionPreference = 'Stop'
                     try {
                         $bootDisks = Get-Disk | Where-Object IsBoot | Select-Object -ExpandProperty Number
-                        $pDisks = Get-PhysicalDisk | Select-Object DeviceId, FriendlyName, CanPool, Size, @{N='MediaType';E={$_.MediaType.ToString().Trim()}}
+                        $pDisks = Get-PhysicalDisk | Select-Object DeviceId, FriendlyName, CanPool, Size, HealthStatus, @{N='MediaType';E={$_.MediaType.ToString().Trim()}}
                         $lDisks = Get-Disk | Select-Object Number, FriendlyName, Size, IsBoot
 
                         $result = @()
@@ -63,12 +63,14 @@ const systemController = {
                             
                             $canPool = $false
                             $mediaType = "Virtual"
+                            $healthStatus = "Unknown"
                             $name = $l.FriendlyName
                             $size = $l.Size
                             
                             if ($p) {
                                 $canPool = $p.CanPool
                                 $mediaType = $p.MediaType
+                                $healthStatus = $p.HealthStatus
                             }
 
                             $result += [PSCustomObject]@{
@@ -77,6 +79,7 @@ const systemController = {
                                 CanPool = $canPool
                                 Size = $size
                                 MediaType = $mediaType
+                                HealthStatus = $healthStatus
                                 IsBoot = $l.IsBoot
                             }
                         }
@@ -91,6 +94,7 @@ const systemController = {
                                     CanPool = $true
                                     Size = $p.Size
                                     MediaType = $p.MediaType
+                                    HealthStatus = $p.HealthStatus
                                     IsBoot = $false
                                 }
                             }
@@ -122,6 +126,7 @@ const systemController = {
                     freeSpace: d.CanPool ? d.Size : 0,
                     canPool: d.CanPool,
                     mediaType: d.MediaType,
+                    healthStatus: d.HealthStatus,
                     isBoot: d.IsBoot
                 }));
 
@@ -132,8 +137,8 @@ const systemController = {
         } else {
             // Mock for non-windows
             res.json([
-                { device: '/dev/sda1', size: 100000000000, freeSpace: 50000000000, name: 'Main Disk', canPool: true, isBoot: false },
-                { device: '/dev/sda2', size: 500000000000, freeSpace: 0, name: 'System Disk', canPool: false, isBoot: true }
+                { device: '/dev/sda1', size: 100000000000, freeSpace: 50000000000, name: 'Main Disk', canPool: true, isBoot: false, healthStatus: 'Healthy' },
+                { device: '/dev/sda2', size: 500000000000, freeSpace: 0, name: 'System Disk', canPool: false, isBoot: true, healthStatus: 'Healthy' }
             ]);
         }
     },

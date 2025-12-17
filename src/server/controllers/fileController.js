@@ -401,11 +401,73 @@ class FileController {
                 }
 
                 // DB Update
-                FileModel.rename(id, file.path, newName, newPath, file.type, (err) => {
+                // We use updateDetails now, but keeping this for backward compatibility or direct calls
+                // Be careful with recursive dependency if we remove rename from model. 
+                // Since we removed `rename` from model and replaced with `updateDetails`, we must update this too!
+                FileModel.updateDetails(id, newName, newPath, file.type, file.path, file.caption, file.tags, (err) => {
                     if (err) return res.status(500).json({ error: err.message });
                     res.json({ success: true, newName, newPath });
                 });
             });
+        });
+    }
+
+    // Update File Details (Name, Caption, Tags)
+    static updateMetadata(req, res) {
+        const id = req.params.id;
+        const { name, caption, tags } = req.body;
+        const userId = req.user.id;
+
+        FileModel.findById(id, (err, file) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!file) return res.status(404).json({ error: 'File not found' });
+            if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
+
+            // Validate tags
+            let validTags = tags;
+            if (tags && !Array.isArray(tags)) {
+                return res.status(400).json({ error: 'Tags must be an array' });
+            }
+
+            // Check if name changed
+            if (name && name !== file.name) {
+                // Name Validation
+                if (typeof name !== 'string' || name.trim() === '') {
+                    return res.status(400).json({ error: 'Invalid name' });
+                }
+                if (/[<>:"/\\|?*]/.test(name)) {
+                    return res.status(400).json({ error: 'Name contains invalid characters' });
+                }
+
+                const parentDir = path.dirname(file.path);
+                const newPath = path.join(parentDir, name);
+
+                // Check collision
+                if (fs.existsSync(newPath)) {
+                    return res.status(400).json({ error: 'A file or folder with this name already exists' });
+                }
+
+                // Physical Rename
+                fs.rename(file.path, newPath, (err) => {
+                    if (err) {
+                        console.error('Rename error:', err);
+                        return res.status(500).json({ error: 'Failed to rename file on disk' });
+                    }
+
+                    // Update DB with new name/path AND metadata
+                    FileModel.updateDetails(id, name, newPath, file.type, file.path, caption, validTags, (err) => {
+                        if (err) return res.status(500).json({ error: err.message });
+                        res.json({ message: 'Details updated successfully', name, newPath });
+                    });
+                });
+
+            } else {
+                // Only metadata update
+                FileModel.updateDetails(id, file.name, file.path, file.type, file.path, caption, validTags, (err) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    res.json({ message: 'Metadata updated' });
+                });
+            }
         });
     }
 
@@ -465,8 +527,9 @@ class FileController {
                         if (err.message !== 'Output stream closed') {
                             console.error('FFmpeg error:', err);
                         }
-                    })
-                    .pipe(res, { end: true });
+                    });
+
+                command.pipe(res, { end: true });
 
                 // Kill ffmpeg if client disconnects
                 req.on('close', () => {
