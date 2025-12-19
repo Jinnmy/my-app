@@ -233,8 +233,21 @@ async function loadPage(pageName) {
         } else if (pageName === 'users') {
             if (window.initUsersPage) await window.initUsersPage();
         } else if (pageName === 'dashboard-home') {
-            loadRecentFiles();
-            fetchSystemData();
+            const isElectron = window.electronAPI && window.electronAPI.isElectron;
+
+            if (isElectron) {
+                // Electron: Show Stats (default), Hide Recent (default)
+                const recentSection = document.querySelector('.recent-files-section');
+                if (recentSection) recentSection.style.display = 'none';
+                fetchSystemData();
+            } else {
+                // Web: Hide Stats, Show Recent
+                const statsRow = document.querySelector('.dashboard-widgets-row');
+                if (statsRow) statsRow.style.display = 'none';
+
+                loadRecentFiles();
+            }
+
             const user = JSON.parse(localStorage.getItem('user'));
             if (user) updateUserDisplay(user);
         } else if (pageName === 'settings') {
