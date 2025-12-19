@@ -15,6 +15,22 @@ class CaptionService {
      */
     static generateCaption(imagePath) {
         return new Promise((resolve, reject) => {
+            // Check settings
+            let settings = { aiEnabled: false };
+            try {
+                const settingsPath = path.join(__dirname, '../config/settings.json');
+                if (require('fs').existsSync(settingsPath)) {
+                    settings = JSON.parse(require('fs').readFileSync(settingsPath, 'utf8'));
+                }
+            } catch (e) {
+                console.error("Failed to read settings in captionService", e);
+            }
+
+            if (!settings.aiEnabled) {
+                console.log('AI Captioning is disabled in settings.');
+                return resolve({ caption: null, tags: [] });
+            }
+
             // Set PYTHONIOENCODING to utf-8 to avoid encoding issues on Windows
             const options = {
                 env: { ...process.env, PYTHONIOENCODING: 'utf-8' }

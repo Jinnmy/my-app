@@ -1,3 +1,4 @@
 {
-    "minimizeToTray": true
+  "minimizeToTray": true,
+  "aiEnabled": false
 }

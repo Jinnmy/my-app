@@ -14,5 +14,8 @@ const verifyAdmin = (req, res, next) => {
 
 router.get('/', verifyToken, verifyAdmin, SettingsController.getSettings);
 router.post('/', verifyToken, verifyAdmin, SettingsController.updateSettings);
+router.get('/ai/status', verifyToken, verifyAdmin, SettingsController.getAiStatus);
+router.post('/ai/download', verifyToken, verifyAdmin, SettingsController.downloadAiModels);
+router.post('/ai/offload', verifyToken, verifyAdmin, SettingsController.offloadAiModels);
 
 module.exports = router;

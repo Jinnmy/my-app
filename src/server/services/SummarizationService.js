@@ -14,6 +14,22 @@ class SummarizationService {
      */
     static generateSummary(filePath) {
         return new Promise((resolve, reject) => {
+            // Check settings
+            let settings = { aiEnabled: false };
+            try {
+                const settingsPath = path.join(__dirname, '../config/settings.json');
+                if (require('fs').existsSync(settingsPath)) {
+                    settings = JSON.parse(require('fs').readFileSync(settingsPath, 'utf8'));
+                }
+            } catch (e) {
+                console.error("Failed to read settings in SummarizationService", e);
+            }
+
+            if (!settings.aiEnabled) {
+                console.log('AI Summarization is disabled in settings.');
+                return resolve(null); // Return null so caller knows it's skipped
+            }
+
             console.log(`Generating summary for: ${filePath}...`);
 
             const pythonProcess = spawn(PYTHON_PATH, [

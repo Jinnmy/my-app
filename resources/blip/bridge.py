@@ -54,14 +54,14 @@ def run_inference(image_path):
         
         input_ids = np.array([[bos_token_id]], dtype=np.int64)
         attention_mask = np.ones(input_ids.shape, dtype=np.int64)
-        encoder_attention_mask = np.ones(image_embeds.shape[:-1], dtype=np.int64)
         
         max_length = 50
         for i in range(max_length):
             text_inputs = {
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
-                "encoder_hidden_states": image_embeds
+                "encoder_hidden_states": image_embeds,
+                "encoder_attention_mask": np.ones(image_embeds.shape[:-1], dtype=np.int64) # Add dummy mask
             }
             
             # Run inference
@@ -71,14 +71,11 @@ def run_inference(image_path):
             next_token_logits = logits[:, -1, :]
             next_token_id = np.argmax(next_token_logits, axis=-1)
             
-
-
             # Append
             input_ids = np.concatenate([input_ids, next_token_id[:, None]], axis=1)
             attention_mask = np.concatenate([attention_mask, np.ones((1, 1), dtype=np.int64)], axis=1)
             
             if next_token_id[0] == eos_token_id:
-
                 break
                 
 
