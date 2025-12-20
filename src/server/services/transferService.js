@@ -3,8 +3,6 @@ const path = require('path');
 const TransferModel = require('../models/transferModel');
 const FileModel = require('../models/fileModel');
 const UserModel = require('../models/userModel');
-const CaptionService = require('../services/captionService');
-const SummarizationService = require('../services/SummarizationService');
 
 const CONCURRENCY_LIMIT = 2; // Simultaneous transfers
 
@@ -15,9 +13,16 @@ class TransferService {
 
     start() {
         console.log('TransferService started.');
-        this.processQueue();
-        // Poll regularly in case of stuck jobs or new ones
-        setInterval(() => this.processQueue(), 5000);
+
+        // Reset any stuck 'processing' transfers from previous run
+        TransferModel.resetProcessing((err, changes) => {
+            if (err) console.error('Failed to reset processing transfers:', err);
+            else if (changes > 0) console.log(`Reset ${changes} stuck transfers to pending.`);
+
+            this.processQueue();
+            // Poll regularly in case of stuck jobs or new ones
+            setInterval(() => this.processQueue(), 5000);
+        });
     }
 
     async processQueue() {
@@ -124,34 +129,21 @@ class TransferService {
                         if (err) console.error('Failed to update storage usage on upload:', err);
                     });
 
+                    // Queue for background processing (Captioning / Summarization)
+                    const CaptionQueue = require('../services/captionQueue');
+
+                    // We can just add it to the queue; the queue handles type checks internally now
+                    CaptionQueue.add({
+                        id: newFile.id,
+                        path: destination,
+                        name: metadata.originalname
+                    });
+
                     TransferModel.updateStatus(id, 'completed');
                 });
             };
 
-            // Check if image and trigger captioning
-            const ext = path.extname(metadata.originalname).toLowerCase();
-            const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.bmp'];
-
-            if (imageExts.includes(ext)) {
-                CaptionService.generateCaption(destination)
-                    .then(result => finalizeUpload(result))
-                    .catch(err => {
-                        console.error('Captioning failed unexpectedly:', err);
-                        finalizeUpload(); // Proceed without caption
-                    });
-            } else if (['.txt', '.docx'].includes(ext)) {
-                SummarizationService.generateSummary(destination)
-                    .then(summary => {
-                        const tags = CaptionService.generateTags(summary);
-                        finalizeUpload({ caption: summary, tags: tags });
-                    })
-                    .catch(err => {
-                        console.error('Summarization failed unexpectedly:', err);
-                        finalizeUpload();
-                    });
-            } else {
-                finalizeUpload();
-            }
+            finalizeUpload();
         });
     }
 

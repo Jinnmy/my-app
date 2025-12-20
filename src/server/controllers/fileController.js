@@ -5,12 +5,23 @@ const TransferModel = require('../models/transferModel');
 const storageConfigPath = path.join(__dirname, '../config/storage.json');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
+const heicConvert = require('heic-convert');
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 // Helper to get root storage path
 const getStoragePath = () => {
-    if (fs.existsSync(storageConfigPath)) {
-        const config = JSON.parse(fs.readFileSync(storageConfigPath, 'utf8'));
+    let configPath = path.join(__dirname, '../config/storage.json');
+
+    // Check if running in Electron (packaged or dev with electron wrapper initialized)
+    // Checking process.versions.electron is a standard way
+    if (process.versions.electron && require('electron').app) {
+        try {
+            configPath = path.join(require('electron').app.getPath('userData'), 'storage.json');
+        } catch (e) { /* might fail if app not ready, but unlikely here */ }
+    }
+
+    if (fs.existsSync(configPath)) {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         return config.volumePath || null;
     }
     return null;
@@ -21,9 +32,39 @@ class FileController {
     static list(req, res) {
         const parentId = req.query.parentId || null;
         const userId = req.user.id;
-        FileModel.findByParentId(userId, parentId, (err, files) => {
+
+        // Pagination
+        let page = parseInt(req.query.page) || 1;
+        let limit = parseInt(req.query.limit) || 100;
+        if (page < 1) page = 1;
+        // Cap limit to avoid massive queries if needed, but 100 is default.
+        if (limit < 1) limit = 100;
+
+        const offset = (page - 1) * limit;
+
+        // 1. Get Total Count
+        FileModel.countByParentId(userId, parentId, (err, total) => {
             if (err) return res.status(500).json({ error: err.message });
-            res.json(files);
+
+            // 2. Get Paginated Data
+            FileModel.findByParentId(userId, parentId, limit, offset, (err, files) => {
+                if (err) return res.status(500).json({ error: err.message });
+
+                const totalPages = Math.ceil(total / limit);
+
+                // Check if client expects simple array (legacy) or we just break it.
+                // Given the instruction "can you implement pagination", we assume we update the contract.
+                // We return a structured object.
+                res.json({
+                    files,
+                    pagination: {
+                        total,
+                        page,
+                        limit,
+                        totalPages
+                    }
+                });
+            });
         });
     }
 
@@ -223,6 +264,33 @@ class FileController {
                     };
 
                     const mimeType = mimeTypes[ext];
+
+                    if (ext === '.heic') {
+                        // Convert HEIC to JPEG on the fly
+                        (async () => {
+                            try {
+                                const inputBuffer = await fs.promises.readFile(file.path);
+                                const outputBuffer = await heicConvert({
+                                    buffer: inputBuffer, // the HEIC file buffer
+                                    format: 'JPEG',      // output format
+                                    quality: 0.8         // the jpeg compression quality, between 0 and 1
+                                });
+
+                                res.setHeader('Content-Type', 'image/jpeg');
+                                res.setHeader('Content-Disposition', `inline; filename="${path.basename(file.name, ext)}.jpg"`);
+                                res.send(outputBuffer);
+
+                                // Track access
+                                FileModel.updateLastAccessed(id, (err) => {
+                                    if (err) console.error('Failed to update access time:', err);
+                                });
+                            } catch (e) {
+                                console.error('HEIC conversion error:', e);
+                                res.status(500).send('Failed to process HEIC file');
+                            }
+                        })();
+                        return; // Stop here, async handling takes over
+                    }
 
                     if (mimeType) {
                         // Send as inline to display in browser
@@ -696,6 +764,131 @@ class FileController {
                 if (err) return res.status(500).json({ error: err.message });
                 res.json(users);
             });
+        });
+    }
+
+    // Check files existence (for sync/backup)
+    static checkExistence(req, res) {
+        const { filenames, parentId } = req.body;
+        const userId = req.user.id;
+
+        if (!Array.isArray(filenames)) {
+            return res.status(400).json({ error: 'filenames must be an array' });
+        }
+
+        FileModel.checkExistence(userId, parentId, filenames, (err, existingNames) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ existing: existingNames });
+        });
+    }
+
+    // Unmarked Files
+    static getUnmarked(req, res) {
+        // Enforce admin access
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Access denied. Admin only.' });
+        }
+
+        const rootPath = getStoragePath();
+        if (!rootPath) {
+            return res.status(500).json({ error: 'Storage not configured' });
+        }
+
+        // Helper to get Map of Path -> ID
+        const getAllFileMap = (cb) => {
+            const db = require('../config/database');
+            db.all('SELECT id, path, user_id FROM files WHERE is_deleted = 0 OR is_deleted IS NULL', [], (err, rows) => {
+                if (err) return cb(err);
+                const map = new Map();
+                rows.forEach(r => map.set(r.path, r));
+                cb(null, map);
+            });
+        };
+
+        getAllFileMap((err, dbFiles) => {
+            if (err) return res.status(500).json({ error: err.message });
+
+            const ignoredFolders = new Set(['System Volume Information', '$RECYCLE.BIN', 'Recovery', 'Config.Msi', '$Recycle.Bin', '.git']);
+
+            // Recursive Scan
+            const scanAndSync = async (dir, parentId) => {
+                let items;
+                try {
+                    items = await fs.promises.readdir(dir, { withFileTypes: true });
+                } catch (e) {
+                    console.error(`Failed to read dir ${dir}:`, e);
+                    return;
+                }
+
+                for (const item of items) {
+                    if (ignoredFolders.has(item.name)) continue;
+
+                    const fullPath = path.join(dir, item.name);
+                    let dbEntry = dbFiles.get(fullPath);
+                    let currentId = dbEntry ? dbEntry.id : null;
+
+                    if (!dbEntry) {
+                        // Create!
+                        try {
+                            const stats = await fs.promises.stat(fullPath);
+                            currentId = await new Promise((resolve, reject) => {
+                                FileModel.createUnmarked({
+                                    name: item.name,
+                                    path: fullPath,
+                                    type: item.isDirectory() ? 'folder' : 'file',
+                                    size: stats.size,
+                                    parent_id: parentId
+                                }, (err, newId) => {
+                                    if (err) reject(err);
+                                    else resolve(newId);
+                                });
+                            });
+                            // Add to map so children find it
+                            dbFiles.set(fullPath, { id: currentId, path: fullPath });
+                        } catch (e) {
+                            console.error(`Failed to register ${fullPath}:`, e);
+                            continue;
+                        }
+                    } else {
+                        // Exists. Use existing ID for children
+                    }
+
+                    if (item.isDirectory()) {
+                        await scanAndSync(fullPath, currentId);
+                    }
+                }
+            };
+
+            // Start Scan
+            // Root items have parent_id = NULL
+            scanAndSync(rootPath, null).then(() => {
+                // Return Unmarked
+                FileModel.findUnmarked((err, files) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    res.json(files);
+                });
+            });
+        });
+    }
+
+    static allocate(req, res) {
+        // Enforce admin access
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Access denied. Admin only.' });
+        }
+
+        const { fileIds, targetUserId } = req.body;
+
+        if (!Array.isArray(fileIds) || fileIds.length === 0) {
+            return res.status(400).json({ error: 'No files selected' });
+        }
+        if (!targetUserId) {
+            return res.status(400).json({ error: 'Target user is required' });
+        }
+
+        FileModel.allocate(fileIds, targetUserId, (err, changes) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ message: `Allocated ${changes} files successfully` });
         });
     }
 }

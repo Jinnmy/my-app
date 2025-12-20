@@ -2,10 +2,16 @@ const { execFile } = require('child_process');
 const path = require('path');
 const nlp = require('compromise');
 
+const { app } = require('electron');
+
 // Configure paths
-// Ensure python is in path or specify absolute path
-const PYTHON_PATH = 'python';
-const SCRIPT_PATH = path.join(__dirname, '../../../resources/blip/bridge.py');
+let PYTHON_PATH = 'python';
+let SCRIPT_PATH = path.join(__dirname, '../../../resources/blip/bridge.py');
+
+if (app.isPackaged) {
+    PYTHON_PATH = path.join(process.resourcesPath, 'python_env/python.exe');
+    SCRIPT_PATH = path.join(process.resourcesPath, 'blip/bridge.py');
+}
 
 class CaptionService {
     /**
@@ -14,7 +20,7 @@ class CaptionService {
      * @returns {Promise<{caption: string, tags: string[]}>} - The generated caption and tags
      */
     static generateCaption(imagePath) {
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
             // Check settings
             let settings = { aiEnabled: false };
             try {
@@ -36,9 +42,49 @@ class CaptionService {
                 env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
             };
 
-            console.log(`Generating caption for: ${imagePath}...`);
+            let inferencePath = imagePath;
+            let tempPath = null;
+            const fs = require('fs');
 
-            execFile(PYTHON_PATH, [SCRIPT_PATH, imagePath], options, (error, stdout, stderr) => {
+            // HEIC Handling
+            if (path.extname(imagePath).toLowerCase() === '.heic') {
+                try {
+                    console.log('Detected HEIC file, converting for captioning...');
+                    const heicConvert = require('heic-convert');
+                    const inputBuffer = await fs.promises.readFile(imagePath);
+                    const outputBuffer = await heicConvert({
+                        buffer: inputBuffer,
+                        format: 'JPEG',
+                        quality: 0.8
+                    });
+
+                    // Create temp file
+                    const uniqueId = Math.random().toString(36).substring(7);
+                    tempPath = path.join(path.dirname(imagePath), `temp_caption_${uniqueId}.jpg`);
+                    await fs.promises.writeFile(tempPath, outputBuffer);
+                    inferencePath = tempPath;
+                } catch (err) {
+                    console.error('Failed to convert HEIC for captioning:', err);
+                    return resolve({ caption: null, tags: [] });
+                }
+            }
+
+            console.log(`Generating caption for: ${inferencePath}...`);
+
+            if (!fs.existsSync(PYTHON_PATH) && PYTHON_PATH.includes('python_env')) {
+                console.warn('Python environment not found. Skipping caption generation.');
+                if (tempPath) fs.unlink(tempPath, () => { });
+                return resolve({ caption: null, tags: [] });
+            }
+
+            execFile(PYTHON_PATH, [SCRIPT_PATH, inferencePath], options, (error, stdout, stderr) => {
+                // Cleanup temp file
+                if (tempPath) {
+                    fs.unlink(tempPath, (err) => {
+                        if (err) console.error('Failed to clean up temp file:', err);
+                    });
+                }
+
                 if (error) {
                     console.error('Inference Error:', stderr);
                     // Don't fail the upload if captioning fails, just resolve null

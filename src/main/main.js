@@ -74,7 +74,13 @@ const createWindow = () => {
   mainWindow.on('close', (event) => {
     if (isQuitting) return; // Let it close if we are quitting
 
-    const settingsPath = path.join(__dirname, '../server/config/settings.json');
+    const isPackaged = app.isPackaged;
+    let settingsPath = path.join(__dirname, '../server/config/settings.json');
+
+    if (isPackaged) {
+      settingsPath = path.join(app.getPath('userData'), 'settings.json');
+    }
+
     let shouldMinimize = true; // Default
 
     try {
@@ -94,7 +100,11 @@ const createWindow = () => {
     }
   });
 
-  const configPath = path.join(__dirname, '../server/config/storage.json');
+  let configPath = path.join(__dirname, '../server/config/storage.json');
+  if (app.isPackaged) {
+    configPath = path.join(app.getPath('userData'), 'storage.json');
+    console.log('Checking config at:', configPath);
+  }
 
   if (fs.existsSync(configPath)) {
     // Setup complete, load the dashboard

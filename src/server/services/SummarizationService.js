@@ -1,10 +1,18 @@
 const { spawn } = require('child_process');
 const path = require('path');
 
+const { app } = require('electron');
+
 // Configure paths
-const PYTHON_PATH = 'python'; // Assumes python is in system PATH
-const SCRIPT_PATH = path.join(__dirname, '../../../resources/python/flan_bridge.py');
-const MODEL_DIR = path.join(__dirname, '../../../resources/python/flan_t5_onnx');
+let PYTHON_PATH = 'python'; // Assumes python is in system PATH for dev
+let SCRIPT_PATH = path.join(__dirname, '../../../resources/python/flan_bridge.py');
+let MODEL_DIR = path.join(__dirname, '../../../resources/python/flan_t5_onnx');
+
+if (app.isPackaged) {
+    PYTHON_PATH = path.join(process.resourcesPath, 'python_env/python.exe');
+    SCRIPT_PATH = path.join(process.resourcesPath, 'python/flan_bridge.py');
+    MODEL_DIR = path.join(process.resourcesPath, 'python/flan_t5_onnx');
+}
 
 class SummarizationService {
     /**
@@ -31,6 +39,10 @@ class SummarizationService {
             }
 
             console.log(`Generating summary for: ${filePath}...`);
+
+            if (!require('fs').existsSync(PYTHON_PATH) && PYTHON_PATH.includes('python_env')) {
+                return reject(new Error('Python environment not found. Please setup AI features first.'));
+            }
 
             const pythonProcess = spawn(PYTHON_PATH, [
                 SCRIPT_PATH,

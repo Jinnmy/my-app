@@ -254,6 +254,8 @@ async function loadPage(pageName) {
             if (window.initSettingsPage) await window.initSettingsPage();
         } else if (pageName === 'trash') {
             if (window.initTrashPage) await window.initTrashPage();
+        } else if (pageName === 'allocations') {
+            if (window.initAllocationsPage) await window.initAllocationsPage();
         }
 
         // Update active state in sidebar
@@ -288,6 +290,13 @@ function updateActiveNavLink(pageName) {
             // New check: Hide Files and Trash link if in Electron
             if ((item.dataset.page === 'files' || item.dataset.page === 'trash') && window.electronAPI && window.electronAPI.isElectron) {
                 item.style.display = 'none';
+            } else if (item.dataset.page === 'allocations') {
+                // ONLY show Allocations in Electron AND if admin
+                if (window.electronAPI && window.electronAPI.isElectron && user.role === 'admin') {
+                    item.style.display = 'flex';
+                } else {
+                    item.style.display = 'none';
+                }
             } else {
                 item.style.display = 'flex'; // Ensure visible
             }
@@ -402,7 +411,7 @@ function createRecentFileCard(file) {
     // Minimal event listeners for recent files (mostly just open/view)
 
     // Determine File Type (Simplified version of files.js logic)
-    const isImage = file.type === 'file' && /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
+    const isImage = file.type === 'file' && /\.(jpg|jpeg|png|gif|webp|heic)$/i.test(file.name);
     const isVideo = file.type === 'file' && /\.(mp4|webm|ogg|mkv)$/i.test(file.name);
     const isDocx = file.type === 'file' && file.name.toLowerCase().endsWith('.docx');
 

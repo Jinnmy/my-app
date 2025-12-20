@@ -196,6 +196,53 @@ async function initSettingsPage() {
             }
         });
     }
+
+    // Factory Reset Logic
+    const factoryResetBtn = document.getElementById('factoryResetBtn');
+    if (factoryResetBtn) {
+        factoryResetBtn.addEventListener('click', async () => {
+            // First confirmation
+            if (!confirm('WARNING: Are you sure you want to perform a Factory Reset? This will DELETE ALL DATA and cannot be undone.')) {
+                return;
+            }
+
+            // Second confirmation (Safety check)
+            if (!confirm('Final Confirmation: All users, files, and settings will be permanently lost. The app will restart. Proceed?')) {
+                return;
+            }
+
+            try {
+                factoryResetBtn.disabled = true;
+                factoryResetBtn.textContent = 'Resetting...';
+
+                const token = localStorage.getItem('token');
+                const response = await fetch('/api/system/factory-reset', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    alert('Reset complete. The application will now restart.');
+                    // In case the backend restart prompt doesn't kill the page immediately
+                    document.body.innerHTML = '<div style="color:white;text-align:center;padding:50px;">Resetting application...</div>';
+                } else {
+                    throw new Error(result.error || 'Reset failed');
+                }
+
+            } catch (error) {
+                console.error('Factory Reset Error:', error);
+                alert('Factory reset failed: ' + error.message);
+                factoryResetBtn.disabled = false;
+                factoryResetBtn.textContent = 'Reset Application';
+            }
+        });
+    }
+
+
 }
 
 // Expose to window so app.js can call it

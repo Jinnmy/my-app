@@ -47,8 +47,11 @@ const userController = {
                 return res.status(401).json({ auth: false, token: null, error: 'Invalid password' });
             }
 
+            const isLongLived = req.body.longLived === true;
+            const expiresIn = isLongLived ? 86400 * 30 : 86400; // 30 days or 24 hours
+
             const token = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, {
-                expiresIn: 86400 // 24 hours
+                expiresIn: expiresIn
             });
 
             res.status(200).json({

@@ -29,19 +29,28 @@ async function initFilesPage() {
 // Search rendering functions removed - moved to search.js
 
 
-async function loadFiles(parentId) {
+let currentPage = 1;
+const itemsPerPage = 100; // Match backend default
+
+async function loadFiles(parentId, page = 1) {
+    currentPage = page; // Update global state
     const fileGrid = document.getElementById('file-grid');
     const loadingState = document.getElementById('files-loading');
     const emptyState = document.getElementById('files-empty-state');
+    const paginationContainer = document.getElementById('pagination-controls') || createPaginationContainer();
 
     // Reset View
     fileGrid.innerHTML = '';
     fileGrid.style.display = 'none';
     emptyState.style.display = 'none';
     loadingState.style.display = 'flex';
+    paginationContainer.style.display = 'none';
 
     try {
-        const url = parentId ? `/api/files?parentId=${parentId}` : '/api/files';
+        let url = parentId ? `/api/files?parentId=${parentId}` : '/api/files';
+        // Append pagination params
+        url += (url.includes('?') ? '&' : '?') + `page=${page}&limit=${itemsPerPage}`;
+
         const response = await fetch(url, {
             headers: {
                 'Authorization': `Bearer ${localStorage.getItem('token')}`
@@ -49,15 +58,36 @@ async function loadFiles(parentId) {
         });
 
         if (!response.ok) throw new Error('Failed to fetch files');
-        const files = await response.json();
+        const data = await response.json();
+
+        // Handle new response structure
+        let files = [];
+        let pagination = null;
+        if (Array.isArray(data)) {
+            files = data;
+        } else {
+            files = data.files;
+            pagination = data.pagination;
+        }
 
         loadingState.style.display = 'none';
 
-        if (files.length === 0) {
+        if (files.length === 0 && page === 1) {
             emptyState.style.display = 'flex';
         } else {
             fileGrid.style.display = 'grid';
             renderFiles(files);
+
+            if (pagination) {
+                if (page > pagination.totalPages && pagination.totalPages > 0) {
+                    loadFiles(parentId, pagination.totalPages);
+                    return;
+                }
+                if (pagination.totalPages > 1) {
+                    renderPagination(pagination);
+                    paginationContainer.style.display = 'flex';
+                }
+            }
         }
 
         updateBreadcrumbs();
@@ -65,6 +95,49 @@ async function loadFiles(parentId) {
         console.error('Error loading files:', error);
         loadingState.innerHTML = '<p class="error-text">Failed to load files</p>';
     }
+}
+
+function createPaginationContainer() {
+    const container = document.createElement('div');
+    container.id = 'pagination-controls';
+    container.className = 'pagination-controls'; // You might need to add CSS for this
+    container.style.display = 'none';
+    container.style.justifyContent = 'center';
+    container.style.gap = '10px';
+    container.style.padding = '20px';
+    container.style.width = '100%';
+
+    // Insert after file grid
+    const fileGrid = document.getElementById('file-grid');
+    fileGrid.parentNode.insertBefore(container, fileGrid.nextSibling);
+    return container;
+}
+
+function renderPagination(pagination) {
+    const container = document.getElementById('pagination-controls');
+    container.innerHTML = '';
+
+    const { page, totalPages } = pagination;
+
+    const prevBtn = document.createElement('button');
+    prevBtn.textContent = 'Previous';
+    prevBtn.className = 'btn btn-secondary'; // Assuming 'btn' classes exist
+    prevBtn.disabled = page <= 1;
+    prevBtn.onclick = () => loadFiles(currentParentId, page - 1);
+
+    const nextBtn = document.createElement('button');
+    nextBtn.textContent = 'Next';
+    nextBtn.className = 'btn btn-secondary';
+    nextBtn.disabled = page >= totalPages;
+    nextBtn.onclick = () => loadFiles(currentParentId, page + 1);
+
+    const info = document.createElement('span');
+    info.textContent = `Page ${page} of ${totalPages}`;
+    info.style.alignSelf = 'center';
+
+    container.appendChild(prevBtn);
+    container.appendChild(info);
+    container.appendChild(nextBtn);
 }
 
 function renderFiles(files) {
@@ -99,7 +172,7 @@ function renderFiles(files) {
         }
 
         // Determine File Type
-        const isImage = file.type === 'file' && /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
+        const isImage = file.type === 'file' && /\.(jpg|jpeg|png|gif|webp|heic)$/i.test(file.name);
         const isVideo = file.type === 'file' && /\.(mp4|webm|ogg|mkv)$/i.test(file.name);
         const isDocx = file.type === 'file' && file.name.toLowerCase().endsWith('.docx');
 
@@ -191,7 +264,7 @@ function renderFiles(files) {
 function enterFolder(id, name) {
     currentPath.push({ id, name });
     currentParentId = id;
-    loadFiles(id);
+    loadFiles(id, 1);
 }
 
 function navigateToBreadcrumb(index) {
@@ -202,7 +275,7 @@ function navigateToBreadcrumb(index) {
         currentPath = currentPath.slice(0, index + 1);
         currentParentId = currentPath[currentPath.length - 1].id;
     }
-    loadFiles(currentParentId);
+    loadFiles(currentParentId, 1);
 }
 
 function updateBreadcrumbs() {
@@ -278,7 +351,7 @@ async function createNewFolder() {
         });
 
         if (response.ok) {
-            loadFiles(currentParentId);
+            loadFiles(currentParentId, currentPage);
         } else {
             const err = await response.json();
             alert(err.error || 'Failed to create folder');
@@ -493,7 +566,7 @@ async function deleteFile(id) {
         });
 
         if (response.ok) {
-            loadFiles(currentParentId);
+            loadFiles(currentParentId, currentPage);
             if (window.updateUserData) window.updateUserData();
         } else {
             console.error('Delete failed');
@@ -599,7 +672,7 @@ async function handleDrop(e) {
 
         if (response.ok) {
             // Refresh
-            loadFiles(currentParentId);
+            loadFiles(currentParentId, currentPage);
         } else {
             const err = await response.json();
             alert(err.error || 'Move failed');
@@ -732,7 +805,7 @@ async function moveFile(fileId, targetParentId) {
         });
 
         if (response.ok) {
-            loadFiles(currentParentId); // Refresh view
+            loadFiles(currentParentId, currentPage); // Refresh view
             // If moved to breadcrumb, current view might be fine, or item disappears.
         } else {
             const err = await response.json();
@@ -756,7 +829,7 @@ async function renameFile(fileId, newName) {
         });
 
         if (response.ok) {
-            loadFiles(currentParentId);
+            loadFiles(currentParentId, currentPage);
         } else {
             const err = await response.json();
             alert(err.error || 'Rename failed');
@@ -1027,7 +1100,7 @@ function renderTransfers(transfers) {
 
                     // Loose equality for null/undefined mismatch
                     if (targetParentId == currentParentId) {
-                        loadFiles(currentParentId); // Refresh!
+                        loadFiles(currentParentId, currentPage); // Refresh!
                     }
                     if (window.updateUserData) window.updateUserData();
                 }
@@ -1283,7 +1356,7 @@ async function saveMetadata(id, name, caption, tags) {
 
         if (response.ok) {
             // Refresh files to update dataset and view
-            loadFiles(currentParentId);
+            loadFiles(currentParentId, currentPage);
         } else {
             const err = await response.json();
             alert(err.error || 'Failed to save metadata');

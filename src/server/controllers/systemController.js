@@ -172,7 +172,11 @@ const systemController = {
         }
 
         const { disks, raidLevel } = req.body;
-        const configPath = path.join(__dirname, '../config/storage.json');
+        let configPath = path.join(__dirname, '../config/storage.json');
+
+        if (electronApp) { // Use electronApp reference to check if we should use userData
+            configPath = path.join(electronApp.getPath('userData'), 'storage.json');
+        }
 
         try {
             if (os.platform() === 'win32' && disks && disks.length > 0) {
@@ -314,7 +318,10 @@ const systemController = {
 
     getStorageStats: async (req, res) => {
         try {
-            const configPath = path.join(__dirname, '../config/storage.json');
+            let configPath = path.join(__dirname, '../config/storage.json');
+            if (electronApp) {
+                configPath = path.join(electronApp.getPath('userData'), 'storage.json');
+            }
 
             // Check if config exists
             if (!fs.existsSync(configPath)) {
@@ -392,6 +399,86 @@ const systemController = {
         } catch (error) {
             console.error('Error fetching storage stats:', error);
             res.status(500).json({ error: 'Failed to fetch storage stats' });
+        }
+    },
+
+    factoryReset: async (req, res) => {
+        try {
+            console.log("Initiating Factory Reset...");
+
+            // 1. Close Database Connection
+            // We need to require db to close it, if it's exported as a singleton
+            const db = require('../config/database');
+            db.close((err) => {
+                if (err) console.error('Error closing database:', err.message);
+                else console.log('Database connection closed.');
+
+                // 2. Delete Files
+                const filesToDelete = [
+                    'database.sqlite',
+                    'config/storage.json',
+                    'config/settings.json'
+                ];
+
+                const isPackaged = electronApp && electronApp.isPackaged;
+
+                filesToDelete.forEach(file => {
+                    // We need to be aggressive about deleting from ALL possible locations
+                    // because dev/prod and 'userData' vs local can get mixed up.
+
+                    const pathsToDelete = [];
+
+                    // 1. Global userData path (Always check this)
+                    if (electronApp) {
+                        const userDataPath = electronApp.getPath('userData');
+                        if (file === 'database.sqlite') {
+                            pathsToDelete.push(path.join(userDataPath, 'database.sqlite'));
+                        } else {
+                            pathsToDelete.push(path.join(userDataPath, path.basename(file)));
+                        }
+                    }
+
+                    // 2. Local Source path (Critical for Dev mode)
+                    // file is like 'config/storage.json' or 'database.sqlite'
+                    // __dirname is .../controllers
+                    if (file === 'database.sqlite') {
+                        pathsToDelete.push(path.join(__dirname, '../../', 'database.sqlite'));
+                    } else {
+                        // file is 'config/storage.json' -> ../config/storage.json
+                        pathsToDelete.push(path.join(__dirname, '../', file));
+                    }
+
+                    pathsToDelete.forEach(p => {
+                        if (fs.existsSync(p)) {
+                            try {
+                                fs.unlinkSync(p);
+                                console.log(`Factory Reset: Successfully deleted ${p}`);
+                            } catch (e) {
+                                console.error(`Factory Reset: Failed to delete ${p}:`, e);
+                            }
+                        } else {
+                            console.log(`Factory Reset: File not found at ${p} (clean)`);
+                        }
+                    });
+                });
+
+                // 3. Send Response & Relaunch
+                res.json({ success: true, message: 'Factory reset complete. Restarting...' });
+
+                setTimeout(() => {
+                    if (electronApp) {
+                        electronApp.relaunch();
+                        electronApp.exit(0);
+                    } else {
+                        console.log('App would restart now if in Electron.');
+                        process.exit(0);
+                    }
+                }, 1000);
+            });
+
+        } catch (error) {
+            console.error('Factory Reset Error:', error);
+            res.status(500).json({ error: 'Factory reset failed: ' + error.message });
         }
     }
 };

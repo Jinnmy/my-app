@@ -104,60 +104,92 @@ class FileModel {
         });
     }
 
-    static findByParentId(userId, parentId, callback) {
-        // If parentId is NULL (root), we want own files AND shared files
-        // But files shared with me should probably appear in a specific "Shared with me" section or mixed in root?
-        // Let's mix them in root for now, or strict separate folder.
-        // User request: "right click ... share ... user to share with".
-        // Usually these appear in root or "Shared" folder.
-        // Let's simply include them in the root listing if parentId is null.
+    static findByParentId(userId, parentId, limit, offset, callback) {
+        // Handle optional pagination arguments
+        if (typeof limit === 'function') {
+            callback = limit;
+            limit = 100;
+            offset = 0;
+        }
 
         let sql = ``;
         let params = [];
 
         if (parentId) {
-            // Inside a folder: Strict ownership or if the user has access to this parent folder?
-            // Simplification: If you have access to parent, you see its children.
-            // But checking parent permission recursively is complex in SQL.
-            // For now: Only show owned files in subfolders. 
-            // Ideally we check if parent is shared with user. 
-
+            // Inside a folder
             // 1. Check if parent folder is shared with user
             const checkShare = `SELECT 1 FROM shared_files WHERE file_id = ? AND user_id = ?`;
             db.get(checkShare, [parentId, userId], (err, row) => {
                 if (row) {
                     // Parent is shared, so list its children
-                    sql = `SELECT * FROM files WHERE parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)`;
-                    db.all(sql, [parentId], (err, rows) => callback(err, rows));
+                    sql = `SELECT * FROM files WHERE parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL) ORDER BY type DESC, name ASC LIMIT ? OFFSET ?`;
+                    db.all(sql, [parentId, limit, offset], (err, rows) => callback(err, rows));
                 } else {
                     // Parent not shared explicitly, check ownership.
-                    // If user owns parent, they see files.
-                    sql = `SELECT * FROM files WHERE user_id = ? AND parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)`;
-                    db.all(sql, [userId, parentId], (err, rows) => callback(err, rows));
+                    sql = `SELECT * FROM files WHERE user_id = ? AND parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL) ORDER BY type DESC, name ASC LIMIT ? OFFSET ?`;
+                    db.all(sql, [userId, parentId, limit, offset], (err, rows) => callback(err, rows));
                 }
             });
-            return; // Async handled above
+            return;
         } else {
             // Root: Own files (parent is null) OR Shared files (files shared with me)
-            // Note: Shared files might be deep inside structure but if shared explicitly, they appear.
-            // Assumption: We only show items shared at root or items moved to root? 
-            // Better: Show all files where I am owner AND parent is NULL
-            // PLUS all files where I am in shared_files.
-
             sql = `
-                SELECT f.*, 'owner' as role FROM files f 
-                WHERE f.user_id = ? AND f.parent_id IS NULL AND (f.is_deleted = 0 OR f.is_deleted IS NULL)
-                
-                UNION
-                
-                SELECT f.*, sf.permission as role FROM files f
-                JOIN shared_files sf ON f.id = sf.file_id
-                WHERE sf.user_id = ? AND (f.is_deleted = 0 OR f.is_deleted IS NULL)
+                SELECT * FROM (
+                    SELECT f.*, 'owner' as role FROM files f 
+                    WHERE f.user_id = ? AND f.parent_id IS NULL AND (f.is_deleted = 0 OR f.is_deleted IS NULL)
+                    
+                    UNION
+                    
+                    SELECT f.*, sf.permission as role FROM files f
+                    JOIN shared_files sf ON f.id = sf.file_id
+                    WHERE sf.user_id = ? AND (f.is_deleted = 0 OR f.is_deleted IS NULL)
+                ) ORDER BY type DESC, name ASC LIMIT ? OFFSET ?
             `;
-            params = [userId, userId];
+            params = [userId, userId, limit, offset];
 
             db.all(sql, params, (err, rows) => {
                 callback(err, rows);
+            });
+        }
+    }
+
+    static countByParentId(userId, parentId, callback) {
+        if (parentId) {
+            // Inside a folder
+            const checkShare = `SELECT 1 FROM shared_files WHERE file_id = ? AND user_id = ?`;
+            db.get(checkShare, [parentId, userId], (err, row) => {
+                let sql = '';
+                let params = [];
+                if (row) {
+                    // Shared parent
+                    sql = `SELECT COUNT(*) as count FROM files WHERE parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)`;
+                    params = [parentId];
+                } else {
+                    // Owned parent
+                    sql = `SELECT COUNT(*) as count FROM files WHERE user_id = ? AND parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)`;
+                    params = [userId, parentId];
+                }
+                db.get(sql, params, (err, result) => {
+                    callback(err, result ? result.count : 0);
+                });
+            });
+            return;
+        } else {
+            // Root
+            const sql = `
+                SELECT COUNT(*) as count FROM (
+                    SELECT f.id FROM files f 
+                    WHERE f.user_id = ? AND f.parent_id IS NULL AND (f.is_deleted = 0 OR f.is_deleted IS NULL)
+                    
+                    UNION
+                    
+                    SELECT f.id FROM files f
+                    JOIN shared_files sf ON f.id = sf.file_id
+                    WHERE sf.user_id = ? AND (f.is_deleted = 0 OR f.is_deleted IS NULL)
+                )
+            `;
+            db.get(sql, [userId, userId], (err, result) => {
+                callback(err, result ? result.count : 0);
             });
         }
     }
@@ -320,6 +352,177 @@ class FileModel {
         `;
         db.all(sql, [userId, limit], (err, rows) => {
             callback(err, rows);
+        });
+    }
+
+    // Check availability of multiple files (for duplicate detection)
+    static checkExistence(userId, parentId, filenames, callback) {
+        if (!filenames || filenames.length === 0) {
+            return callback(null, []);
+        }
+
+        const placeholders = filenames.map(() => '?').join(',');
+        let sql = `SELECT name FROM files WHERE user_id = ? AND name IN (${placeholders}) AND (is_deleted = 0 OR is_deleted IS NULL)`;
+        const params = [userId, ...filenames];
+
+        if (parentId) {
+            sql += ` AND parent_id = ?`;
+            params.push(parentId);
+        } else {
+            sql += ` AND parent_id IS NULL`;
+        }
+
+        db.all(sql, params, (err, rows) => {
+            if (err) return callback(err);
+            // Return array of names that exist
+            const existingNames = rows.map(row => row.name);
+            callback(null, existingNames);
+        });
+    }
+
+    // Unmarked Files Management
+    static findUnmarked(callback) {
+        // Return only "Top Level" unmarked files.
+        // A file is top-level unmarked if its user_id is NULL AND (its parent_id is NULL OR its parent has user_id IS NOT NULL).
+        // Essentially, we want to hide files whose parent is ALSO unmarked (because they are inside an unmarked folder).
+
+        // Complex query:
+        // SELECT f.* FROM files f
+        // LEFT JOIN files parent ON f.parent_id = parent.id
+        // WHERE f.user_id IS NULL AND (f.is_deleted = 0 OR ...)
+        // AND (f.parent_id IS NULL OR parent.user_id IS NOT NULL)
+
+        const sql = `
+            SELECT f.* FROM files f
+            LEFT JOIN files parent ON f.parent_id = parent.id
+            WHERE f.user_id IS NULL 
+            AND (f.is_deleted = 0 OR f.is_deleted IS NULL)
+            AND (f.parent_id IS NULL OR parent.user_id IS NOT NULL)
+        `;
+        db.all(sql, [], (err, rows) => {
+            callback(err, rows);
+        });
+    }
+
+    static allocate(fileIds, userId, callback) {
+        if (!fileIds || fileIds.length === 0) return callback(null, 0);
+
+        db.serialize(() => {
+            db.run('BEGIN TRANSACTION');
+
+            // 1. Update direct items
+            const placeholders = fileIds.map(() => '?').join(',');
+            const sqlUpdateDirect = `UPDATE files SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`;
+            const params = [userId, ...fileIds];
+
+            db.run(sqlUpdateDirect, params, function (err) {
+                if (err) {
+                    console.error('Allocation error (direct):', err);
+                    db.run('ROLLBACK');
+                    return callback(err);
+                }
+
+                const changes = this.changes;
+
+                // 2. Update children (recursive ownership)
+                // Fetch paths of the allocated items to find folders
+                const sqlGetPaths = `SELECT path, type FROM files WHERE id IN (${placeholders})`;
+                db.all(sqlGetPaths, fileIds, (err, rows) => {
+                    if (err) {
+                        console.error('Allocation error (fetch paths):', err);
+                        db.run('ROLLBACK');
+                        return callback(err);
+                    }
+
+                    // Filter only folders
+                    const folders = rows.filter(r => r.type === 'folder');
+
+                    if (folders.length === 0) {
+                        db.run('COMMIT', (err) => {
+                            if (err) return callback(err);
+                            callback(null, changes);
+                        });
+                        return;
+                    }
+
+                    // Update children for each folder
+                    // We do this sequentially to accept any number of folders without blowing stack or expression tree
+                    let completed = 0;
+                    let hasError = false;
+
+                    const runNext = (index) => {
+                        if (index >= folders.length) {
+                            if (!hasError) {
+                                db.run('COMMIT', (err) => {
+                                    if (err) return callback(err);
+                                    callback(null, changes); // We return direct changes, or maybe total? managing total is hard async.
+                                });
+                            }
+                            return;
+                        }
+
+                        const folder = folders[index];
+                        // Update all files that start with this path
+                        const childSql = `UPDATE files SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE path LIKE ? OR path LIKE ?`;
+                        // Coverage for both slash types if mixed, though usually one per system.
+                        db.run(childSql, [userId, folder.path + '\\%', folder.path + '/%'], (err) => {
+                            if (err) {
+                                hasError = true;
+                                console.error('Allocation error (children):', err);
+                                db.run('ROLLBACK');
+                                return callback(err);
+                            }
+                            runNext(index + 1);
+                        });
+                    };
+
+                    runNext(0);
+                });
+            });
+        });
+    }
+
+    static createUnmarked(file, callback) {
+        const { name, path, type, size, parent_id } = file;
+        const sql = `INSERT INTO files (name, path, type, size, parent_id, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`;
+
+        db.run(sql, [name, path, type, size, parent_id], function (err) {
+            callback(err, this.lastID);
+        });
+    }
+
+    // Sync Helpers
+    static getAllPaths(callback) {
+        const sql = `SELECT path FROM files WHERE is_deleted = 0 OR is_deleted IS NULL`;
+        db.all(sql, [], (err, rows) => {
+            if (err) return callback(err);
+            const paths = new Set(rows.map(row => row.path));
+            callback(null, paths);
+        });
+    }
+
+    static bulkCreateUnmarked(files, callback) {
+        if (!files || files.length === 0) return callback(null);
+
+        // SQLite doesn't support bulk insert efficiently with a single statement limit easily for huge sets, 
+        // but transaction is best here.
+        db.serialize(() => {
+            db.run('BEGIN TRANSACTION');
+            const stmt = db.prepare(`INSERT INTO files (name, path, type, size, parent_id, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`);
+
+            files.forEach(f => {
+                stmt.run(f.name, f.path, f.type, f.size);
+            });
+
+            stmt.finalize(err => {
+                if (err) {
+                    db.run('ROLLBACK');
+                    return callback(err);
+                }
+                db.run('COMMIT', (err) => {
+                    callback(err);
+                });
+            });
         });
     }
 }

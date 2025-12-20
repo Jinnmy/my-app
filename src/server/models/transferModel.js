@@ -110,6 +110,13 @@ class TransferModel {
             callback(err, row ? row.count : 0);
         });
     }
+
+    static resetProcessing(callback) {
+        const sql = `UPDATE transfers SET status = 'pending' WHERE status = 'processing'`;
+        db.run(sql, [], function (err) {
+            callback(err, this.changes);
+        });
+    }
 }
 
 module.exports = TransferModel;

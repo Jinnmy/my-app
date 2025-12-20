@@ -50,6 +50,12 @@ router.post('/folder', verifyToken, FileController.createFolder);
 // If verifyToken reads body, it might fail if body isn't parsed yet. 
 // However, verifyToken only reads headers, so it's fine.
 router.post('/upload', verifyToken, upload.single('file'), FileController.uploadFile);
+router.post('/check-exists', verifyToken, FileController.checkExistence);
+
+// Allocation Routes (Admin)
+router.get('/unmarked', verifyToken, FileController.getUnmarked);
+router.post('/allocate', verifyToken, FileController.allocate);
+
 router.get('/download/:id', verifyToken, FileController.download);
 router.put('/move/:id', verifyToken, FileController.move);
 router.put('/rename/:id', verifyToken, FileController.rename);
