@@ -43,9 +43,11 @@ class CaptionQueue {
 
             let result = { caption: null, tags: [] };
 
+            console.log(`[CaptionQueue] Generating content for ${file.name}...`);
+
             if (imageExts.includes(ext)) {
                 result = await CaptionService.generateCaption(file.path);
-            } else if (['.txt', '.docx'].includes(ext)) {
+            } else if (['.txt', '.docx', '.pdf'].includes(ext)) {
                 const summary = await SummarizationService.generateSummary(file.path);
                 const tags = CaptionService.generateTags(summary);
                 result = { caption: summary, tags };
@@ -64,6 +66,8 @@ class CaptionQueue {
                         return;
                     }
 
+                    console.log(`[CaptionQueue] Updating DB for ${file.id} with caption: "${result.caption.substring(0, 30)}..."`);
+
                     FileModel.updateDetails(
                         currentFile.id,
                         currentFile.name,
@@ -74,7 +78,7 @@ class CaptionQueue {
                         result.tags,
                         (err) => {
                             if (err) console.error(`[CaptionQueue] Failed to save caption for ${file.id}:`, err);
-                            else console.log(`[CaptionQueue] Processed ${file.name}`);
+                            else console.log(`[CaptionQueue] DB Update Success for ${file.name}`);
                         }
                     );
                 });

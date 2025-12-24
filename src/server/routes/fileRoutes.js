@@ -70,4 +70,14 @@ router.post('/:id/share', verifyToken, FileController.share);
 router.post('/:id/unshare', verifyToken, FileController.unshare);
 router.get('/:id/shared-users', verifyToken, FileController.getSharedUsers);
 
+// Public Share Link Routes
+router.post('/:id/share-link', verifyToken, FileController.createLink);
+router.get('/s/:token', FileController.getLinkInfo); // Public
+router.get('/s/:token/download', FileController.downloadLink); // Public
+
+// Lock routes
+router.post('/:id/lock', verifyToken, FileController.lock);
+router.post('/:id/unlock', verifyToken, FileController.unlock);
+router.post('/:id/verify-password', verifyToken, FileController.verifyPassword);
+
 module.exports = router;

@@ -5,8 +5,31 @@ let currentParentId = null;
 
 async function initFilesPage() {
     console.log('Initializing Files Page');
-    // Load initial file list (root)
-    await loadFiles(null);
+    // Check for pending navigation from Dashboard
+    if (window.pendingNavigate) {
+        const { parentId, fileId } = window.pendingNavigate;
+        window.pendingNavigate = null; // Clear it
+        console.log('Handling pending navigation:', parentId, fileId);
+        await loadFiles(parentId || null);
+
+        // Highlight file after render
+        setTimeout(() => {
+            const card = document.querySelector(`.file-card[data-id="${fileId}"]`);
+            if (card) {
+                card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                card.style.transition = 'box-shadow 0.5s, transform 0.5s';
+                card.style.boxShadow = '0 0 0 4px var(--primary-color)';
+                card.style.transform = 'scale(1.05)';
+                setTimeout(() => {
+                    card.style.boxShadow = '';
+                    card.style.transform = '';
+                }, 2000);
+            }
+        }, 100);
+    } else {
+        // Load initial file list (root)
+        await loadFiles(null);
+    }
 
     // Setup Event Listeners
     setupFileEventListeners();
@@ -16,7 +39,9 @@ async function initFilesPage() {
     setupShareModal();
     setupVideoModal();
     setupTransferPanel();
+    setupTransferPanel();
     startTransferPolling();
+    setupLockModals();
     // setupSearch(); // Moved to global app.js
 }
 
@@ -150,23 +175,12 @@ function renderFiles(files) {
         fileCard.dataset.id = file.id;
         fileCard.dataset.type = file.type;
         fileCard.dataset.name = file.name;
+        if (file.is_locked) fileCard.dataset.locked = "true";
 
         // Add metadata for tooltip
         if (file.caption) fileCard.dataset.caption = file.caption;
-        if (file.tags) fileCard.dataset.tags = file.tags; // Assuming tags is a JSON string or we need to parse it? 
-        // Backend says: const tagsStr = tags ? JSON.stringify(tags) : null;
-        // So in the API response `file.tags` should be a JSON string if it came directly from DB.
-        // However, usually API JSON parses it automatically if the content-type is json? 
-        // Wait, SQLite stores it as text. The API sends it as text unless we parse it in controller.
-        // Let's check controller. FileController.list calls FileModel.findByParentId.
-        // FileModel just returns rows. So `tags` is likely a JSON string stringified.
-        // Let's safely handle it. 
         if (file.tags) {
-            // If it's already an object (e.g. if driver parses JSON types), use it.
-            // But sqlite driver usually returns string for TEXT columns.
             try {
-                // If it is a string, we set it as is (it's stringified JSON),
-                // The tooltip function will parse it.
                 fileCard.dataset.tags = typeof file.tags === 'string' ? file.tags : JSON.stringify(file.tags);
             } catch (e) { console.error('Tag error', e); }
         }
@@ -174,6 +188,7 @@ function renderFiles(files) {
         // Determine File Type
         const isImage = file.type === 'file' && /\.(jpg|jpeg|png|gif|webp|heic)$/i.test(file.name);
         const isVideo = file.type === 'file' && /\.(mp4|webm|ogg|mkv)$/i.test(file.name);
+        const isPdf = file.type === 'file' && file.name.toLowerCase().endsWith('.pdf');
         const isDocx = file.type === 'file' && file.name.toLowerCase().endsWith('.docx');
 
         // Define Icon
@@ -185,12 +200,22 @@ function renderFiles(files) {
             </svg>`;
         } else if (isImage) {
             const token = localStorage.getItem('token');
-            const imageUrl = `/api/files/download/${file.id}?token=${token}`;
-            icon = `<img src="${imageUrl}" alt="${file.name}" class="file-preview-img" loading="lazy" />`;
+            const imageUrl = file.is_locked ? '/assets/lock-placeholder.png' : `/api/files/download/${file.id}?token=${token}`;
+            if (file.is_locked) {
+                icon = `<svg xmlns="http://www.w3.org/2000/svg" class="file-icon" viewBox="0 0 24 24" fill="#888"><path d="M12 1.5a5.25 5.25 0 00-5.25 5.25v3H5.25A2.25 2.25 0 003 12v7.5A2.25 2.25 0 005.25 21.75h13.5A2.25 2.25 0 0021 19.5V12a2.25 2.25 0 00-2.25-2.25h-1.5v-3A5.25 5.25 0 0012 1.5zM8.25 6.75a3.75 3.75 0 117.5 0v3h-7.5v-3z"/></svg>`;
+            } else {
+                icon = `<img src="${imageUrl}" alt="${file.name}" class="file-preview-img" loading="lazy" />`;
+            }
         } else if (isVideo) {
             icon = `
             <svg xmlns="http://www.w3.org/2000/svg" class="file-icon video-icon" viewBox="0 0 24 24" fill="currentColor">
                  <path d="M4.5 4.5a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h8.25a3 3 0 0 0 3-3v-9a3 3 0 0 0-3-3H4.5ZM19.94 18.75l-2.69-2.69V7.94l2.69-2.69c.944-.945 2.56-.276 2.56 1.06v11.38c0 1.336-1.616 2.005-2.56 1.06Z" />
+            </svg>`;
+        } else if (isPdf) {
+            icon = `
+            <svg xmlns="http://www.w3.org/2000/svg" class="file-icon pdf-icon" viewBox="0 0 24 24" fill="currentColor" style="color: #F40F02;">
+                <path d="M5.625 1.5c-1.036 0-1.875.84-1.875 1.875v17.25c0 1.035.84 1.875 1.875 1.875h12.75c1.035 0 1.875-.84 1.875-1.875V12.75A3.75 3.75 0 0 0 16.5 9h-1.875a1.875 1.875 0 0 1-1.875-1.875V5.25A3.75 3.75 0 0 0 9 1.5H5.625Z" />
+                <path d="M12.971 1.816A5.23 5.23 0 0 1 14.25 5.25v1.875c0 .207.168.375.375.375H16.5a5.23 5.23 0 0 1 3.434 1.279 9.768 9.768 0 0 0-6.963-6.963Z" />
             </svg>`;
         } else {
             icon = `
@@ -206,38 +231,56 @@ function renderFiles(files) {
                 <div class="file-name" title="${file.name}">${file.name}</div>
                 <div class="file-meta">${file.type === 'folder' ? 'Folder' : formatBytes(file.size)}</div>
             </div>
+            ${file.is_locked ? '<div class="lock-overlay"><i class="fas fa-lock"></i></div>' : ''}
         `;
 
-        // Folder Navigation
-        if (file.type === 'folder') {
+        // If locked, single click prompts password (for view)
+        // If not locked, normal behavior
+        if (file.is_locked) {
+            fileCard.classList.add('locked-file');
+            fileCard.addEventListener('click', () => {
+                promptUnlock(file.id, false, (token) => {
+                    // Determine what to do after unlock
+                    if (isImage) {
+                        const fullUrl = `/api/files/download/${file.id}?token=${localStorage.getItem('token')}&unlockToken=${token}`;
+                        window.open(fullUrl, '_blank');
+                    } else if (isVideo) {
+                        playVideo(file.id, file.name, token);
+                    } else if (isPdf) {
+                        window.open(`pdf-viewer.html?id=${file.id}&name=${encodeURIComponent(file.name)}&unlockToken=${token}`, '_blank');
+                    } else if (isDocx) {
+                        window.open(`/editor.html?id=${file.id}&unlockToken=${token}`, '_blank');
+                    } else {
+                        downloadFile(file.id, token);
+                    }
+                });
+            });
+        } else {
             if (file.type === 'folder') {
                 fileCard.addEventListener('click', () => {
                     enterFolder(file.id, file.name);
                 });
             }
-        }
 
-        // Image Preview
-        if (isImage) {
             if (isImage) {
                 fileCard.addEventListener('click', () => {
                     const token = localStorage.getItem('token');
                     window.open(`/api/files/download/${file.id}?token=${token}`, '_blank');
                 });
             }
-        }
 
-        // Video Preview
-        if (isVideo) {
             if (isVideo) {
                 fileCard.addEventListener('click', () => {
                     playVideo(file.id, file.name);
                 });
             }
-        }
 
-        // Word Editor
-        if (isDocx) {
+            if (isPdf) {
+                fileCard.addEventListener('click', () => {
+                    window.open(`pdf-viewer.html?id=${file.id}&name=${encodeURIComponent(file.name)}`, '_blank');
+                });
+            }
+
             if (isDocx) {
                 fileCard.addEventListener('click', () => {
                     editFile(file.id);
@@ -245,9 +288,11 @@ function renderFiles(files) {
             }
         }
 
-        // Drag and Drop Support
-        fileCard.setAttribute('draggable', true);
-        fileCard.addEventListener('dragstart', handleDragStart);
+        if (!file.is_locked) {
+            fileCard.setAttribute('draggable', true);
+            fileCard.addEventListener('dragstart', handleDragStart);
+        }
+
         fileCard.addEventListener('dragover', handleDragOver);
         fileCard.addEventListener('dragleave', handleDragLeave);
         fileCard.addEventListener('drop', handleDrop);
@@ -429,6 +474,7 @@ function formatBytes(bytes, decimals = 2) {
 let contextMenuFileId = null;
 let contextMenuFileType = null;
 let contextMenuFileName = null;
+let contextMenuIsLocked = false;
 
 function setupContextMenu() {
     const fileGrid = document.getElementById('file-grid');
@@ -439,6 +485,8 @@ function setupContextMenu() {
     const editBtn = document.getElementById('ctx-edit');
     const shareBtn = document.getElementById('ctx-share');
     const metadataBtn = document.getElementById('ctx-metadata');
+    const lockBtn = document.getElementById('ctx-lock');
+    const unlockBtn = document.getElementById('ctx-unlock');
 
     // Context Menu Trigger
     fileGrid.addEventListener('contextmenu', (e) => {
@@ -448,8 +496,9 @@ function setupContextMenu() {
             const id = fileCard.dataset.id;
             const type = fileCard.dataset.type;
             const name = fileCard.dataset.name;
+            const locked = fileCard.dataset.locked === "true";
 
-            showContextMenu(e.pageX, e.pageY, id, type, name);
+            showContextMenu(e.pageX, e.pageY, id, type, name, locked);
         }
     });
 
@@ -463,34 +512,62 @@ function setupContextMenu() {
     // Action Handlers
     deleteBtn.onclick = async () => {
         if (contextMenuFileId) {
-            if (confirm('Are you sure you want to delete this item?')) {
-                await deleteFile(contextMenuFileId);
+            const executeDelete = async (token) => {
+                if (confirm('Are you sure you want to delete this item?')) {
+                    await deleteFile(contextMenuFileId, token);
+                }
+            };
+
+            if (contextMenuIsLocked) {
+                promptUnlock(contextMenuFileId, false, executeDelete);
+            } else {
+                executeDelete(null);
             }
         }
     };
 
     downloadBtn.onclick = () => {
         if (contextMenuFileId && contextMenuFileType !== 'folder') {
-            downloadFile(contextMenuFileId);
+            const executeDownload = (token) => {
+                downloadFile(contextMenuFileId, token);
+            };
+            if (contextMenuIsLocked) {
+                promptUnlock(contextMenuFileId, false, executeDownload);
+            } else {
+                executeDownload(null);
+            }
         }
     };
 
     if (moveBtn) {
         moveBtn.onclick = () => {
             if (contextMenuFileId) {
-                openMoveModal(contextMenuFileId);
-                contextMenu.style.display = 'none';
+                const executeMove = (token) => {
+                    openMoveModal(contextMenuFileId, token);
+                    contextMenu.style.display = 'none';
+                };
+
+                if (contextMenuIsLocked) {
+                    promptUnlock(contextMenuFileId, false, executeMove);
+                } else {
+                    executeMove(null);
+                }
             }
         };
     }
 
-
-
     if (editBtn) {
         editBtn.onclick = () => {
             if (contextMenuFileId) {
-                editFile(contextMenuFileId);
-                contextMenu.style.display = 'none';
+                const executeEdit = (token) => {
+                    editFile(contextMenuFileId, token);
+                    contextMenu.style.display = 'none';
+                };
+                if (contextMenuIsLocked) {
+                    promptUnlock(contextMenuFileId, false, executeEdit);
+                } else {
+                    executeEdit(null);
+                }
             }
         };
     }
@@ -498,8 +575,15 @@ function setupContextMenu() {
     if (shareBtn) {
         shareBtn.onclick = () => {
             if (contextMenuFileId) {
-                openShareModal(contextMenuFileId);
-                contextMenu.style.display = 'none';
+                const executeShare = (token) => {
+                    openShareModal(contextMenuFileId, token);
+                    contextMenu.style.display = 'none';
+                };
+                if (contextMenuIsLocked) {
+                    promptUnlock(contextMenuFileId, false, executeShare);
+                } else {
+                    executeShare(null);
+                }
             }
         };
     }
@@ -507,16 +591,41 @@ function setupContextMenu() {
     if (metadataBtn) {
         metadataBtn.onclick = () => {
             if (contextMenuFileId) {
-                // Get current caption and tags from DOM dataset
-                const fileCard = document.querySelector(`.file-card[data-id="${contextMenuFileId}"]`);
-                const caption = fileCard.dataset.caption || '';
-                let tags = [];
-                try {
-                    tags = fileCard.dataset.tags ? JSON.parse(fileCard.dataset.tags) : [];
-                    if (typeof tags === 'string') tags = JSON.parse(tags);
-                } catch (e) { tags = []; }
+                const executeMeta = (token = null) => {
+                    const fileCard = document.querySelector(`.file-card[data-id="${contextMenuFileId}"]`);
+                    const caption = fileCard.dataset.caption || '';
+                    let tags = [];
+                    try {
+                        tags = fileCard.dataset.tags ? JSON.parse(fileCard.dataset.tags) : [];
+                        if (typeof tags === 'string') tags = JSON.parse(tags);
+                    } catch (e) { tags = []; }
 
-                openMetadataModal(contextMenuFileId, contextMenuFileName, caption, tags);
+                    openMetadataModal(contextMenuFileId, contextMenuFileName, caption, tags, token);
+                    contextMenu.style.display = 'none';
+                };
+
+                if (contextMenuIsLocked) {
+                    promptUnlock(contextMenuFileId, false, executeMeta);
+                } else {
+                    executeMeta(null);
+                }
+            }
+        };
+    }
+
+    if (lockBtn) {
+        lockBtn.onclick = () => {
+            if (contextMenuFileId) {
+                openLockModal(contextMenuFileId);
+                contextMenu.style.display = 'none';
+            }
+        };
+    }
+
+    if (unlockBtn) {
+        unlockBtn.onclick = () => {
+            if (contextMenuFileId) {
+                promptUnlock(contextMenuFileId, true); // true = permanent unlock
                 contextMenu.style.display = 'none';
             }
         };
@@ -524,20 +633,33 @@ function setupContextMenu() {
 }
 
 
-function showContextMenu(x, y, id, type, name) {
+function showContextMenu(x, y, id, type, name, locked) {
+    hideTooltip();
     const contextMenu = document.getElementById('context-menu');
     const downloadBtn = document.getElementById('ctx-download');
     const editBtn = document.getElementById('ctx-edit');
     const shareBtn = document.getElementById('ctx-share');
+    const lockBtn = document.getElementById('ctx-lock');
+    const unlockBtn = document.getElementById('ctx-unlock');
 
     contextMenuFileId = id;
     contextMenuFileType = type;
     contextMenuFileName = name;
+    contextMenuIsLocked = locked;
 
     // Position Menu
     contextMenu.style.top = `${y}px`;
     contextMenu.style.left = `${x}px`;
     contextMenu.style.display = 'block';
+
+    // Lock/Unlock Toggle
+    if (locked) {
+        if (lockBtn) lockBtn.style.display = 'none';
+        if (unlockBtn) unlockBtn.style.display = 'flex';
+    } else {
+        if (lockBtn) lockBtn.style.display = 'flex';
+        if (unlockBtn) unlockBtn.style.display = 'none';
+    }
 
     // Toggle Download for folders
     if (type === 'folder') {
@@ -556,9 +678,12 @@ function showContextMenu(x, y, id, type, name) {
     }
 }
 
-async function deleteFile(id) {
+async function deleteFile(id, unlockToken = null) {
     try {
-        const response = await fetch(`/api/files/${id}`, {
+        let url = `/api/files/${id}`;
+        if (unlockToken) url += `?unlockToken=${unlockToken}`;
+
+        const response = await fetch(url, {
             method: 'DELETE',
             headers: {
                 'Authorization': `Bearer ${localStorage.getItem('token')}`
@@ -577,50 +702,24 @@ async function deleteFile(id) {
     }
 }
 
-function downloadFile(id) {
-    // Trigger download via window.location (or create anchor)
-    // Using fetch blob if auth header is strictly required, BUT standard browser download is easier 
-    // if we pass token in query param or rely on cookie. 
-    // Since we use Bearer header, we need to fetch blob and save it.
-
+function downloadFile(id, unlockToken = null) {
     const token = localStorage.getItem('token');
+    let url = `/api/files/download/${id}`;
 
-    fetch(`/api/files/download/${id}`, {
-        headers: {
-            'Authorization': `Bearer ${token}`
-        }
-    })
-        .then(response => {
-            if (!response.ok) throw new Error('Download failed');
-            return response.blob().then(blob => {
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                // Content-Disposition usually handles filename, but if we have it in DOM we can use it.
-                // For now, let the browser infer or we need to extract filename from response headers.
-                // Simplified: we rely on browser detection or response header.
+    // Append tokens
+    const params = new URLSearchParams();
+    params.append('token', token);
+    if (unlockToken) params.append('unlockToken', unlockToken);
 
-                // To be precise, let's try to get filename from header
-                const disposition = response.headers.get('Content-Disposition');
-                let filename = 'download';
-                if (disposition && disposition.indexOf('attachment') !== -1) {
-                    const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
-                    const matches = filenameRegex.exec(disposition);
-                    if (matches != null && matches[1]) {
-                        filename = matches[1].replace(/['"]/g, '');
-                    }
-                }
+    url += `?${params.toString()}`;
 
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-            });
-        })
-        .catch(err => {
-            console.error(err);
-            alert('Failed to download file');
-        });
+    // Trigger download
+    const a = document.createElement('a');
+    a.href = url;
+    a.setAttribute('download', '');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 }
 
 
@@ -690,6 +789,7 @@ async function handleDrop(e) {
 
 let moveTargetId = null;
 let fileToMoveId = null;
+let fileToMoveToken = null;
 
 function setupMoveModal() {
     const modal = document.getElementById('move-modal');
@@ -720,7 +820,7 @@ function setupMoveModal() {
     if (confirmBtn) {
         confirmBtn.onclick = async () => {
             if (!moveTargetId || !fileToMoveId) return;
-            await moveFile(fileToMoveId, moveTargetId);
+            await moveFile(fileToMoveId, moveTargetId, fileToMoveToken);
             closeModal();
         };
     }
@@ -769,8 +869,9 @@ function createMoveResultItem(id, name, path) {
     return div;
 }
 
-function openMoveModal(id) {
+function openMoveModal(id, unlockToken = null) {
     fileToMoveId = id;
+    fileToMoveToken = unlockToken;
     moveTargetId = null;
     const confirmBtn = document.getElementById('btn-confirm-move');
     if (confirmBtn) confirmBtn.disabled = true;
@@ -784,6 +885,179 @@ function openMoveModal(id) {
     if (modal) modal.style.display = 'block';
 }
 
+// --- Lock Modals & Logic ---
+
+function setupLockModals() {
+    // Lock Modal
+    const lockModal = document.getElementById('lock-file-modal');
+    const closeLockBtn = document.getElementById('close-lock-modal');
+    const cancelLockBtn = document.getElementById('btn-cancel-lock');
+    const confirmLockBtn = document.getElementById('btn-confirm-lock');
+
+    // Unlock Modal (Prompt)
+    const unlockModal = document.getElementById('unlock-file-modal');
+    const closeUnlockBtn = document.getElementById('close-unlock-modal');
+    const cancelUnlockBtn = document.getElementById('btn-cancel-unlock');
+    const confirmUnlockBtn = document.getElementById('btn-confirm-unlock');
+
+    // Close Handlers
+    const closeLock = () => { if (lockModal) lockModal.style.display = 'none'; document.getElementById('lock-password-input').value = ''; };
+    const closeUnlock = () => { if (unlockModal) unlockModal.style.display = 'none'; document.getElementById('unlock-password-input').value = ''; };
+
+    if (closeLockBtn) closeLockBtn.onclick = closeLock;
+    if (cancelLockBtn) cancelLockBtn.onclick = closeLock;
+
+    if (closeUnlockBtn) closeUnlockBtn.onclick = closeUnlock;
+    if (cancelUnlockBtn) cancelUnlockBtn.onclick = closeUnlock;
+
+    window.addEventListener('click', (e) => {
+        if (e.target === lockModal) closeLock();
+        if (e.target === unlockModal) closeUnlock();
+    });
+
+    // Confirm Lock
+    if (confirmLockBtn) {
+        confirmLockBtn.onclick = async () => {
+            const password = document.getElementById('lock-password-input').value;
+            if (!password || password.length < 4) {
+                alert('Password must be at least 4 characters');
+                return;
+            }
+            await lockFile(window.lockTargetId, password);
+            closeLock();
+        };
+    }
+
+    // Confirm Unlock
+    if (confirmUnlockBtn) {
+        confirmUnlockBtn.onclick = async () => {
+            const password = document.getElementById('unlock-password-input').value;
+            if (!password) {
+                alert('Please enter password');
+                return;
+            }
+
+            if (window.unlockPermanent) {
+                await unlockFilePermanent(window.unlockTargetId, password);
+            } else {
+                await verifyAndExecute(window.unlockTargetId, password);
+            }
+            closeUnlock();
+        };
+    }
+}
+
+function openLockModal(id) {
+    window.lockTargetId = id;
+    const modal = document.getElementById('lock-file-modal');
+    if (modal) modal.style.display = 'block';
+    const input = document.getElementById('lock-password-input');
+    if (input) input.focus();
+}
+
+function promptUnlock(id, permanent = false, callback = null) {
+    window.unlockTargetId = id;
+    window.unlockPermanent = permanent;
+    window.afterUnlockAction = callback;
+
+    const modal = document.getElementById('unlock-file-modal');
+    const title = document.getElementById('unlock-modal-title');
+    const btn = document.getElementById('btn-confirm-unlock');
+
+    if (title) title.innerText = permanent ? 'Unlock File (Remove Lock)' : 'Enter Password to Access';
+    if (btn) btn.innerText = permanent ? 'Unlock' : 'Access';
+
+    if (modal) modal.style.display = 'block';
+
+    const input = document.getElementById('unlock-password-input');
+    if (input) input.focus();
+}
+
+async function lockFile(id, password) {
+    try {
+        const response = await fetch(`/api/files/${id}/lock`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ password })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            alert('File locked successfully');
+            loadFiles(currentParentId, currentPage);
+        } else {
+            alert(data.error || 'Failed to lock file');
+        }
+    } catch (e) {
+        console.error(e);
+        alert('Error locking file');
+    }
+}
+
+async function unlockFilePermanent(id, password) {
+    try {
+        const response = await fetch(`/api/files/${id}/unlock`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ password })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            alert('File unlocked');
+            loadFiles(currentParentId, currentPage);
+        } else {
+            alert(data.error || 'Failed to unlock file');
+        }
+    } catch (e) {
+        console.error(e);
+        alert('Error unlocking file');
+    }
+}
+
+async function verifyAndExecute(id, password) {
+    try {
+        const response = await fetch(`/api/files/${id}/verify-password`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ password })
+        });
+
+        const data = await response.json();
+        if (response.ok && data.success) {
+            const token = data.token;
+            if (window.afterUnlockAction && typeof window.afterUnlockAction === 'function') {
+                window.afterUnlockAction(token);
+            }
+        } else {
+            alert('Incorrect password');
+        }
+    } catch (e) {
+        console.error(e);
+        alert('Error unlocking');
+    }
+}
+
+function openWithToken(id, unlockToken) {
+    // Construct URL
+    // We also need the User Auth Token for the middleware (unless we bypass auth for unlocked? No, security).
+    const authToken = localStorage.getItem('token');
+
+    // We will use `?token=AUTH_TOKEN&unlockToken=UNLOCK_TOKEN`
+    // Assuming I fix the backend to look for `unlockToken`.
+
+    const url = `/api/files/download/${id}?token=${authToken}&unlockToken=${unlockToken}`;
+    window.open(url, '_blank');
+}
+
+
 // Helper debounce
 function debounce(func, wait) {
     let timeout;
@@ -793,20 +1067,22 @@ function debounce(func, wait) {
     };
 }
 
-async function moveFile(fileId, targetParentId) {
+async function moveFile(fileId, targetParentId, unlockToken = null) {
     try {
+        const body = { targetParentId: targetParentId };
+        if (unlockToken) body.unlockToken = unlockToken;
+
         const response = await fetch(`/api/files/move/${fileId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${localStorage.getItem('token')}`
             },
-            body: JSON.stringify({ targetParentId: targetParentId })
+            body: JSON.stringify(body)
         });
 
         if (response.ok) {
-            loadFiles(currentParentId, currentPage); // Refresh view
-            // If moved to breadcrumb, current view might be fine, or item disappears.
+            loadFiles(currentParentId, currentPage);
         } else {
             const err = await response.json();
             alert(err.error || 'Move failed');
@@ -817,15 +1093,18 @@ async function moveFile(fileId, targetParentId) {
     }
 }
 
-async function renameFile(fileId, newName) {
+async function renameFile(fileId, newName, unlockToken = null) {
     try {
+        const body = { newName: newName };
+        if (unlockToken) body.unlockToken = unlockToken;
+
         const response = await fetch(`/api/files/rename/${fileId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${localStorage.getItem('token')}`
             },
-            body: JSON.stringify({ newName: newName })
+            body: JSON.stringify(body)
         });
 
         if (response.ok) {
@@ -843,12 +1122,25 @@ async function renameFile(fileId, newName) {
 // --- Share Modal & Logic ---
 
 let shareFileId = null;
+let shareFileToken = null;
 
 function setupShareModal() {
     const modal = document.getElementById('share-modal');
     const closeBtn = document.getElementById('close-share-modal');
     const addShareBtn = document.getElementById('btn-add-share');
     const emailInput = document.getElementById('share-email-input');
+
+    // Tabs
+    const tabUser = document.querySelector('.tab-btn[data-tab="share-user"]');
+    const tabLink = document.querySelector('.tab-btn[data-tab="share-link"]');
+    const contentUser = document.getElementById('tab-share-user');
+    const contentLink = document.getElementById('tab-share-link');
+
+    // Link Elements
+    const generateBtn = document.getElementById('btn-generate-link');
+    const copyBtn = document.getElementById('btn-copy-link');
+    const linkOutput = document.getElementById('share-link-output');
+    const linkResult = document.getElementById('share-link-result');
 
     const closeModal = () => modal.style.display = 'none';
 
@@ -857,25 +1149,55 @@ function setupShareModal() {
         if (e.target === modal) closeModal();
     });
 
+    // Tab Logic
+    const switchTab = (tab) => {
+        if (tab === 'share-user') {
+            tabUser.classList.add('active');
+            tabUser.style.borderBottom = '2px solid var(--primary-color)';
+            tabUser.style.color = '#fff';
+            tabLink.classList.remove('active');
+            tabLink.style.borderBottom = 'none';
+            tabLink.style.color = '#888';
+            contentUser.style.display = 'block';
+            contentLink.style.display = 'none';
+        } else {
+            tabLink.classList.add('active');
+            tabLink.style.borderBottom = '2px solid var(--primary-color)';
+            tabLink.style.color = '#fff';
+            tabUser.classList.remove('active');
+            tabUser.style.borderBottom = 'none';
+            tabUser.style.color = '#888';
+            contentLink.style.display = 'block';
+            contentUser.style.display = 'none';
+        }
+    };
+
+    if (tabUser) tabUser.onclick = () => switchTab('share-user');
+    if (tabLink) tabLink.onclick = () => switchTab('share-link');
+
+    // User Share Logic
     if (addShareBtn) {
         addShareBtn.onclick = async () => {
             const email = emailInput.value;
             if (!email) return;
 
             try {
+                const body = { targetBy: 'email', value: email, permission: 'view' };
+                if (shareFileToken) body.unlockToken = shareFileToken;
+
                 const response = await fetch(`/api/files/${shareFileId}/share`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${localStorage.getItem('token')}`
                     },
-                    body: JSON.stringify({ targetBy: 'email', value: email, permission: 'view' })
+                    body: JSON.stringify(body)
                 });
 
                 const data = await response.json();
                 if (response.ok) {
                     emailInput.value = '';
-                    loadSharedUsers(shareFileId);
+                    loadSharedUsers(shareFileId, shareFileToken);
                 } else {
                     alert(data.error || 'Share failed');
                 }
@@ -885,23 +1207,78 @@ function setupShareModal() {
             }
         };
     }
-}
 
-async function openShareModal(id) {
-    shareFileId = id;
-    const modal = document.getElementById('share-modal');
-    if (modal) {
-        modal.style.display = 'block';
-        loadSharedUsers(id);
+    // Generate Link Logic
+    if (generateBtn) {
+        generateBtn.onclick = async () => {
+            const expiry = document.getElementById('share-link-expiry').value;
+            const uses = document.getElementById('share-link-uses').value;
+
+            try {
+                const body = {
+                    expiresIn: expiry === '0' ? null : parseInt(expiry),
+                    maxUses: uses === '0' ? null : parseInt(uses)
+                };
+
+                const response = await fetch(`/api/files/${shareFileId}/share-link`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    },
+                    body: JSON.stringify(body)
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    const link = `${window.location.origin}/share.html?token=${data.token}`;
+                    linkOutput.value = link;
+                    linkResult.style.display = 'block';
+                } else {
+                    alert(data.error || 'Failed to generate link');
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Error generating link');
+            }
+        };
+    }
+
+    if (copyBtn) {
+        copyBtn.onclick = () => {
+            linkOutput.select();
+            document.execCommand('copy');
+            const originalText = copyBtn.textContent;
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => copyBtn.textContent = originalText, 2000);
+        };
     }
 }
 
-async function loadSharedUsers(fileId) {
+async function openShareModal(id, unlockToken = null) {
+    shareFileId = id;
+    shareFileToken = unlockToken;
+    const modal = document.getElementById('share-modal');
+    if (modal) {
+        // Reset View
+        const tabUser = document.querySelector('.tab-btn[data-tab="share-user"]');
+        if (tabUser) tabUser.click(); // Switch to first tab
+        document.getElementById('share-link-result').style.display = 'none';
+
+        modal.style.display = 'block';
+        loadSharedUsers(id, unlockToken);
+    }
+}
+
+async function loadSharedUsers(fileId, unlockToken = null) {
     const list = document.getElementById('shared-users-list');
     list.innerHTML = '<p style="padding: 10px; color: #888;">Loading...</p>';
 
     try {
-        const response = await fetch(`/api/files/${fileId}/shared-users`, {
+        let url = `/api/files/${fileId}/shared-users`;
+        if (unlockToken) url += `?unlockToken=${unlockToken}`;
+
+        const response = await fetch(url, {
             headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
         });
         const users = await response.json();
@@ -1014,17 +1391,21 @@ function setupVideoModal() {
 }
 
 function playVideo(fileId, fileName) {
-    const modal = document.getElementById('video-modal');
-    const title = document.getElementById('video-title');
-    const player = document.getElementById('video-player');
+    const videoModal = document.getElementById('video-modal');
+    const videoPlayer = document.getElementById('video-player');
+    const videoTitle = document.getElementById('video-title');
 
-    if (modal && player) {
-        title.textContent = "Playing: " + fileName;
-        player.src = `/api/files/stream/${fileId}?token=${localStorage.getItem('token')}`;
-        modal.style.display = 'block';
-        player.play().catch(e => console.log('Auto-play prevented', e));
-    }
+    videoTitle.textContent = fileName;
+    videoModal.style.display = 'block';
+
+    const token = localStorage.getItem('token');
+    videoPlayer.src = `/api/files/download/${fileId}?token=${token}`;
+    videoPlayer.play();
 }
+
+
+// --- PDF Viewer Logic ---
+// logic moved to pdf-viewer.html
 
 // --- Transfer Queue Logic ---
 

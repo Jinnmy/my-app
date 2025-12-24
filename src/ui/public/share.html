@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shared File - NAS Portal</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: var(--bg-color);
+            margin: 0;
+            font-family: 'Inter', sans-serif;
+            color: #fff;
+        }
+
+        .share-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 40px;
+            width: 100%;
+            max-width: 480px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .file-icon-large {
+            display: inline-block;
+            margin: 0 auto 20px;
+            color: var(--primary-color);
+        }
+
+        .file-name {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            word-break: break-all;
+        }
+
+        .file-meta {
+            color: #888;
+            margin-bottom: 30px;
+        }
+
+        .error-container {
+            text-align: center;
+            animation: fadeIn 0.5s ease;
+        }
+
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-left-color: var(--primary-color);
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loading" style="text-align: center;">
+        <div class="spinner"></div>
+        <div style="color: #888;">Fetching file info...</div>
+    </div>
+
+    <div class="share-card" id="share-card" style="display: none;">
+        <div id="file-icon-container">
+            <!-- Icon injected -->
+        </div>
+        <div class="file-name" id="file-name">filename.ext</div>
+        <div class="file-meta" id="file-meta">0 KB</div>
+
+        <button id="btn-download" class="btn-primary" style="width: 100%; padding: 12px; font-size: 1.1rem;">Download
+            File</button>
+    </div>
+
+    <div id="error-container" class="error-container" style="display: none;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#ff4d4d"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 20px;">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="15" y1="9" x2="9" y2="15"></line>
+            <line x1="9" y1="9" x2="15" y2="15"></line>
+        </svg>
+        <h2 style="color: #ff4d4d; margin-bottom: 10px;">Link Expired or Invalid</h2>
+        <p style="color: #888;">This shared link is no longer available.</p>
+    </div>
+
+    <script src="js/share.js"></script>
+</body>
+
+</html>

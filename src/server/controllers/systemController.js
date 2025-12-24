@@ -174,7 +174,7 @@ const systemController = {
         const { disks, raidLevel } = req.body;
         let configPath = path.join(__dirname, '../config/storage.json');
 
-        if (electronApp) { // Use electronApp reference to check if we should use userData
+        if (electronApp && electronApp.isPackaged) { // Use electronApp reference to check if we should use userData
             configPath = path.join(electronApp.getPath('userData'), 'storage.json');
         }
 
@@ -319,7 +319,7 @@ const systemController = {
     getStorageStats: async (req, res) => {
         try {
             let configPath = path.join(__dirname, '../config/storage.json');
-            if (electronApp) {
+            if (electronApp && electronApp.isPackaged) {
                 configPath = path.join(electronApp.getPath('userData'), 'storage.json');
             }
 

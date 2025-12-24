@@ -4,9 +4,14 @@ const path = require('node:path');
 let tray = null;
 let isQuitting = false;
 
-// Generic cloud icon (base64)
-const iconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAAAbUlEQVR4nO2WQQqAMAwE/f+f7EX0KCK4tB68CBSyDd1MdxQopX4sy5J07GMqXwB6wD5W8QWgB+xjFV8AesA+VvEFoAfsYxVfAHrAPlbxBaAH7GMVXwB6wD5W8QWgB+xjFV8AesA+1v/wl6z77wAlJzpB2wAAAABJRU5ErkJggg==';
-const icon = nativeImage.createFromDataURL(`data:image/png;base64,${iconBase64}`);
+// Generic cloud icon (base64) - REMOVED
+// const iconBase64 = '...'; 
+// const icon = nativeImage.createFromDataURL(`data:image/png;base64,${iconBase64}`);
+
+// Load icon from assets
+const iconPath = path.join(__dirname, '../ui/public/assets/logo.ico');
+const icon = nativeImage.createFromPath(iconPath);
+
 const { startServer } = require('../server/server');
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -68,7 +73,8 @@ const createWindow = () => {
       nodeIntegration: false, // Security best practice
       contextIsolation: true
     },
-    autoHideMenuBar: true // Make it look more like an app
+    autoHideMenuBar: true, // Make it look more like an app
+    icon: icon // Set window icon
   });
 
   mainWindow.on('close', (event) => {

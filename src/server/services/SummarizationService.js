@@ -44,44 +44,82 @@ class SummarizationService {
                 return reject(new Error('Python environment not found. Please setup AI features first.'));
             }
 
-            const pythonProcess = spawn(PYTHON_PATH, [
-                SCRIPT_PATH,
-                filePath,
-                '--model_dir', MODEL_DIR
-            ], {
-                env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-            });
+            // PDF Handling
+            let inputPath = filePath;
+            let tempPath = null;
 
-            let outputData = '';
-            let errorData = '';
+            const processSubprocess = () => {
+                const pythonProcess = spawn(PYTHON_PATH, [
+                    SCRIPT_PATH,
+                    inputPath,
+                    '--model_dir', MODEL_DIR
+                ], {
+                    env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+                });
 
-            pythonProcess.stdout.on('data', (data) => {
-                outputData += data.toString();
-            });
+                let outputData = '';
+                let errorData = '';
 
-            pythonProcess.stderr.on('data', (data) => {
-                errorData += data.toString();
-                // Check if it's a progress log or actual error, for now we just collect it
-                // console.debug(`[Python Stderr]: ${data}`); 
-            });
+                pythonProcess.stdout.on('data', (data) => {
+                    outputData += data.toString();
+                });
 
-            pythonProcess.on('close', (code) => {
-                if (code !== 0) {
-                    console.error(`Summarization failed with code ${code}. Error: ${errorData}`);
-                    // If it failed, we can reject, or resolve null depending on error handling strategy.
-                    // For now, rejecting to let caller handle it.
-                    reject(new Error(`Process exited with code ${code}: ${errorData}`));
-                } else {
-                    const summary = outputData.trim();
-                    console.log(`Summary generated successfully.`);
-                    resolve(summary);
-                }
-            });
+                pythonProcess.stderr.on('data', (data) => {
+                    errorData += data.toString();
+                });
 
-            pythonProcess.on('error', (err) => {
-                console.error('Failed to start subprocess.', err);
-                reject(err);
-            });
+                pythonProcess.on('close', (code) => {
+                    // Cleanup temp file
+                    if (tempPath && require('fs').existsSync(tempPath)) {
+                        require('fs').unlinkSync(tempPath);
+                    }
+
+                    if (code !== 0) {
+                        console.error(`Summarization failed with code ${code}. Error: ${errorData}`);
+                        reject(new Error(`Process exited with code ${code}: ${errorData}`));
+                    } else {
+                        const summary = outputData.trim();
+                        console.log(`Summary generated successfully.`);
+                        resolve(summary);
+                    }
+                });
+
+                pythonProcess.on('error', (err) => {
+                    // Cleanup temp file
+                    if (tempPath && require('fs').existsSync(tempPath)) {
+                        require('fs').unlinkSync(tempPath);
+                    }
+                    console.error('Failed to start subprocess.', err);
+                    reject(err);
+                });
+            };
+
+            const ext = path.extname(filePath).toLowerCase();
+            if (ext === '.pdf') {
+                console.log('Detected PDF, extracting text...');
+                const pdf = require('pdf-parse');
+                const fs = require('fs');
+
+                fs.readFile(filePath, (err, dataBuffer) => {
+                    if (err) return reject(err);
+
+                    pdf(dataBuffer).then(data => {
+                        const text = data.text;
+                        // Write to temp file
+                        tempPath = filePath + '.temp.txt';
+                        fs.writeFile(tempPath, text, (err) => {
+                            if (err) return reject(err);
+                            inputPath = tempPath;
+                            processSubprocess();
+                        });
+                    }).catch(err => {
+                        console.error('PDF parsing error:', err);
+                        reject(err);
+                    });
+                });
+            } else {
+                processSubprocess();
+            }
         });
     }
 }

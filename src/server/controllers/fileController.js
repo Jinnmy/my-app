@@ -1,4 +1,4 @@
-const fs = require('fs');
+﻿const fs = require('fs');
 const path = require('path');
 const FileModel = require('../models/fileModel');
 const TransferModel = require('../models/transferModel');
@@ -6,7 +6,14 @@ const storageConfigPath = path.join(__dirname, '../config/storage.json');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const heicConvert = require('heic-convert');
+const crypto = require('crypto');
+
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 ffmpeg.setFfmpegPath(ffmpegPath);
+
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this'; // Should be in env
+
 
 // Helper to get root storage path
 const getStoragePath = () => {
@@ -28,6 +35,25 @@ const getStoragePath = () => {
 };
 
 class FileController {
+    // Helper to verify lock
+    static verifyLock(file, req) {
+        if (!file.is_locked) return true;
+        const unlockToken = req.query.unlockToken || req.body.unlockToken;
+        if (!unlockToken) return false;
+        try {
+            const decoded = jwt.verify(unlockToken, JWT_SECRET);
+            // Allow if token matches fileId OR if token is a user token for the owner?
+            // Usually unlock token is specialized.
+            // My download logic checked: decoded.fileId != id && decoded.sub != userId
+            // Let's match that.
+            if (decoded.fileId && decoded.fileId == file.id) return true;
+            if (decoded.sub && decoded.sub == req.user.id) return true; // Owner override if they have master token?
+            return false;
+        } catch (e) {
+            return false;
+        }
+    }
+
     // List files/folders in a directory (by parentId)
     static list(req, res) {
         const parentId = req.query.parentId || null;
@@ -190,7 +216,9 @@ class FileController {
                         originalname: file.originalname,
                         size: file.size,
                         mimetype: file.mimetype,
-                        parentId: (parentId && parentId !== 'null' && parentId !== 'undefined') ? parentId : null
+                        mimetype: file.mimetype,
+                        parentId: (parentId && parentId !== 'null' && parentId !== 'undefined') ? parentId : null,
+                        isBackup: req.body.isBackup === 'true' || req.body.isBackup === true // Capture isBackup flag
                     }
                 }, (err, transfer) => {
                     if (err) {
@@ -243,95 +271,118 @@ class FileController {
                 if (!file) return res.status(404).json({ error: 'File not found' });
 
                 // Check ownership or Shared Access
-                const proceedDownload = () => {
-                    if (file.type === 'folder') {
-                        return res.status(400).json({ error: 'Cannot download folders yet' });
-                    }
-
-                    if (!fs.existsSync(file.path)) {
-                        return res.status(404).json({ error: 'File not found on disk' });
-                    }
-
-                    // Detect mime type for images to allow inline preview
-                    const ext = path.extname(file.name).toLowerCase();
-                    const mimeTypes = {
-                        '.jpg': 'image/jpeg',
-                        '.jpeg': 'image/jpeg',
-                        '.png': 'image/png',
-                        '.gif': 'image/gif',
-                        '.webp': 'image/webp',
-                        '.svg': 'image/svg+xml'
-                    };
-
-                    const mimeType = mimeTypes[ext];
-
-                    if (ext === '.heic') {
-                        // Convert HEIC to JPEG on the fly
-                        (async () => {
-                            try {
-                                const inputBuffer = await fs.promises.readFile(file.path);
-                                const outputBuffer = await heicConvert({
-                                    buffer: inputBuffer, // the HEIC file buffer
-                                    format: 'JPEG',      // output format
-                                    quality: 0.8         // the jpeg compression quality, between 0 and 1
-                                });
-
-                                res.setHeader('Content-Type', 'image/jpeg');
-                                res.setHeader('Content-Disposition', `inline; filename="${path.basename(file.name, ext)}.jpg"`);
-                                res.send(outputBuffer);
-
-                                // Track access
-                                FileModel.updateLastAccessed(id, (err) => {
-                                    if (err) console.error('Failed to update access time:', err);
-                                });
-                            } catch (e) {
-                                console.error('HEIC conversion error:', e);
-                                res.status(500).send('Failed to process HEIC file');
-                            }
-                        })();
-                        return; // Stop here, async handling takes over
-                    }
-
-                    if (mimeType) {
-                        // Send as inline to display in browser
-                        res.setHeader('Content-Type', mimeType);
-                        res.setHeader('Content-Disposition', `inline; filename="${file.name}"`);
-                        const stream = fs.createReadStream(file.path);
-                        stream.pipe(res);
-                    } else {
-                        // Force download for other files
-                        res.download(file.path, file.name, (err) => {
-                            if (err) {
-                                console.error('Download error:', err);
-                                if (!res.headersSent) {
-                                    res.status(500).send('Could not download file');
-                                }
-                            } else {
-                                // Track access on successful download
-                                FileModel.updateLastAccessed(id, (err) => {
-                                    if (err) console.error('Failed to update access time:', err);
-                                });
-                            }
-                        });
-                    }
-
-                    // If inline (pipe), we also want to track access. 
-                    if (mimeType) {
-                        FileModel.updateLastAccessed(id, (err) => {
-                            if (err) console.error('Failed to update access time:', err);
-                        });
-                    }
+                const checkAccess = (cb) => {
+                    if (file.user_id === userId) return cb(true);
+                    FileModel.isSharedWith(id, userId, (err, isShared) => {
+                        if (err) return cb(false); // Default deny on error
+                        cb(isShared);
+                    });
                 };
 
-                if (file.user_id === userId) {
+                checkAccess((hasAccess) => {
+                    if (!hasAccess) return res.status(403).json({ error: 'Access denied' });
+
+                    // Check Lock Status
+                    if (file.is_locked) {
+                        const unlockToken = req.query.unlockToken;
+                        if (!unlockToken) {
+                            return res.status(403).json({ error: 'File is locked', isLocked: true });
+                        }
+                        // Verify token
+                        try {
+                            const decoded = jwt.verify(unlockToken, JWT_SECRET);
+                            if (decoded.fileId != id && decoded.sub != userId) { // Allow if user matches or file specific token
+                                return res.status(403).json({ error: 'Invalid access token for this file' });
+                            }
+                        } catch (e) {
+                            return res.status(403).json({ error: 'Invalid or expired unlock token' });
+                        }
+                    }
+
+                    const proceedDownload = () => {
+                        if (file.type === 'folder') {
+                            return res.status(400).json({ error: 'Cannot download folders yet' });
+                        }
+                        // ... (rest of download logic) ...
+                        if (!fs.existsSync(file.path)) {
+                            return res.status(404).json({ error: 'File not found on disk' });
+                        }
+
+                        // Detect mime type for images to allow inline preview
+                        const ext = path.extname(file.name).toLowerCase();
+                        const mimeTypes = {
+                            '.jpg': 'image/jpeg',
+                            '.jpeg': 'image/jpeg',
+                            '.png': 'image/png',
+                            '.gif': 'image/gif',
+                            '.webp': 'image/webp',
+                            '.svg': 'image/svg+xml',
+                            '.pdf': 'application/pdf'
+                        };
+
+                        const mimeType = mimeTypes[ext];
+
+                        if (ext === '.heic') {
+                            // Convert HEIC to JPEG on the fly
+                            (async () => {
+                                try {
+                                    const inputBuffer = await fs.promises.readFile(file.path);
+                                    const outputBuffer = await heicConvert({
+                                        buffer: inputBuffer, // the HEIC file buffer
+                                        format: 'JPEG',      // output format
+                                        quality: 0.8         // the jpeg compression quality, between 0 and 1
+                                    });
+
+                                    res.setHeader('Content-Type', 'image/jpeg');
+                                    res.setHeader('Content-Disposition', `inline; filename="${path.basename(file.name, ext)}.jpg"`);
+                                    res.send(outputBuffer);
+
+                                    // Track access
+                                    FileModel.updateLastAccessed(id, (err) => {
+                                        if (err) console.error('Failed to update access time:', err);
+                                    });
+                                } catch (e) {
+                                    console.error('HEIC conversion error:', e);
+                                    res.status(500).send('Failed to process HEIC file');
+                                }
+                            })();
+                            return; // Stop here, async handling takes over
+                        }
+
+                        if (mimeType) {
+                            // Send as inline to display in browser
+                            res.setHeader('Content-Type', mimeType);
+                            res.setHeader('Content-Disposition', `inline; filename="${file.name}"`);
+                            const stream = fs.createReadStream(file.path);
+                            stream.pipe(res);
+                        } else {
+                            // Force download for other files
+                            res.download(file.path, file.name, (err) => {
+                                if (err) {
+                                    console.error('Download error:', err);
+                                    if (!res.headersSent) {
+                                        res.status(500).send('Could not download file');
+                                    }
+                                } else {
+                                    // Track access on successful download
+                                    FileModel.updateLastAccessed(id, (err) => {
+                                        if (err) console.error('Failed to update access time:', err);
+                                    });
+                                }
+                            });
+                        }
+
+                        // If inline (pipe), we also want to track access. 
+                        if (mimeType) {
+                            FileModel.updateLastAccessed(id, (err) => {
+                                if (err) console.error('Failed to update access time:', err);
+                            });
+                        }
+                    };
+
+                    // Invoke Logic
                     proceedDownload();
-                } else {
-                    FileModel.isSharedWith(id, userId, (err, isShared) => {
-                        if (err) return res.status(500).json({ error: err.message });
-                        if (!isShared) return res.status(403).json({ error: 'Access denied' });
-                        proceedDownload();
-                    });
-                }
+                });
             });
         });
     }
@@ -345,6 +396,9 @@ class FileController {
             if (err) return res.status(500).json({ error: err.message });
             if (!file) return res.status(404).json({ error: 'File not found' });
             if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
+
+            // Check Lock
+            if (!FileController.verifyLock(file, req)) return res.status(403).json({ error: 'File is locked' });
 
             // Soft Delete in DB (Do NOT delete from disk yet)
             FileModel.delete(id, (err) => {
@@ -367,6 +421,9 @@ class FileController {
             // Let's check FileModel. findById: `SELECT * FROM files WHERE id = ?`. It does NOT filter. Good.
 
             if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
+
+            // Check Lock
+            if (!FileController.verifyLock(file, req)) return res.status(403).json({ error: 'File is locked' });
 
             // Remove from filesystem
             fs.rm(file.path, { recursive: true, force: true }, (err) => {
@@ -431,6 +488,9 @@ class FileController {
             if (file.user_id !== userId) {
                 return res.status(403).json({ error: 'Access denied' });
             }
+
+            // Check Lock
+            if (!FileController.verifyLock(file, req)) return res.status(403).json({ error: 'File is locked' });
 
             // Target Parent Validation
             const getTargetDirectory = (targetId, cb) => {
@@ -507,6 +567,9 @@ class FileController {
                 return res.status(403).json({ error: 'Access denied' });
             }
 
+            // Check Lock
+            if (!FileController.verifyLock(file, req)) return res.status(403).json({ error: 'File is locked' });
+
             const parentDir = path.dirname(file.path);
             const newPath = path.join(parentDir, newName);
 
@@ -544,6 +607,9 @@ class FileController {
             if (err) return res.status(500).json({ error: err.message });
             if (!file) return res.status(404).json({ error: 'File not found' });
             if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
+
+            // Check Lock
+            if (!FileController.verifyLock(file, req)) return res.status(403).json({ error: 'File is locked' });
 
             // Validate tags
             let validTags = tags;
@@ -711,6 +777,9 @@ class FileController {
             if (!file) return res.status(404).json({ error: 'File not found' });
             if (file.user_id !== userId) return res.status(403).json({ error: 'Only owner can share' });
 
+            // Check Lock
+            if (!FileController.verifyLock(file, req)) return res.status(403).json({ error: 'File is locked' });
+
             // Resolve User
             const UserModel = require('../models/userModel');
             const resolveUser = (cb) => {
@@ -763,6 +832,115 @@ class FileController {
             FileModel.getSharedUsers(id, (err, users) => {
                 if (err) return res.status(500).json({ error: err.message });
                 res.json(users);
+            });
+        });
+    }
+
+    // Share Link Methods
+    static createLink(req, res) {
+        const id = req.params.id;
+        const { expiresIn, maxUses } = req.body; // expiresIn in minutes
+        const userId = req.user.id;
+
+        FileModel.findById(id, (err, file) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!file) return res.status(404).json({ error: 'File not found' });
+            if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
+
+            const token = crypto.randomBytes(16).toString('hex');
+            let expiresAt = null;
+            if (expiresIn) {
+                // Determine unit? default minutes.
+                expiresAt = new Date(Date.now() + expiresIn * 60000).toISOString();
+            }
+
+            FileModel.createShareLink(id, userId, token, expiresAt, maxUses || null, (err) => {
+                if (err) return res.status(500).json({ error: err.message });
+                res.json({ token, expiresAt, maxUses });
+            });
+        });
+    }
+
+    static getLinkInfo(req, res) {
+        const token = req.params.token;
+        FileModel.findShareLink(token, (err, link) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!link) return res.status(404).json({ error: 'Link not found' });
+
+            // Check Expiry
+            if (link.expires_at && new Date(link.expires_at) < new Date()) {
+                return res.status(410).json({ error: 'Link expired' });
+            }
+
+            // Check Usage Limit
+            if (link.max_uses && link.used_count >= link.max_uses) {
+                return res.status(410).json({ error: 'Link usage limit reached' });
+            }
+
+            FileModel.findById(link.file_id, (err, file) => {
+                if (err) return res.status(500).json({ error: err.message });
+                if (!file) return res.status(404).json({ error: 'File not found' });
+
+                res.json({
+                    filename: file.name,
+                    size: file.size,
+                    type: file.type,
+                });
+            });
+        });
+    }
+
+    static downloadLink(req, res) {
+        const token = req.params.token;
+
+        FileModel.findShareLink(token, (err, link) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!link) return res.status(404).json({ error: 'Link not found' });
+
+            // Check Expiry
+            if (link.expires_at && new Date(link.expires_at) < new Date()) {
+                return res.status(410).json({ error: 'Link expired' });
+            }
+
+            // Check Usage Limit
+            if (link.max_uses && link.used_count >= link.max_uses) {
+                return res.status(410).json({ error: 'Link usage limit reached' });
+            }
+
+            // Increment Usage
+            FileModel.incrementShareLinkUsage(token, (err) => {
+                if (err) console.error('Failed to increment link usage:', err);
+
+                FileModel.findById(link.file_id, (err, file) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    if (!file) return res.status(404).json({ error: 'File not found' });
+
+                    if (!fs.existsSync(file.path)) {
+                        return res.status(404).json({ error: 'File not found on disk' });
+                    }
+
+                    const ext = path.extname(file.name).toLowerCase();
+                    const mimeTypes = {
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.png': 'image/png',
+                        '.gif': 'image/gif',
+                        '.webp': 'image/webp',
+                        '.svg': 'image/svg+xml',
+                        '.pdf': 'application/pdf',
+                        '.mp4': 'video/mp4'
+                    };
+                    const mimeType = mimeTypes[ext];
+
+                    if (mimeType) {
+                        res.setHeader('Content-Type', mimeType);
+                        res.setHeader('Content-Disposition', `inline; filename="${file.name}"`);
+                        const stream = fs.createReadStream(file.path);
+                        stream.pipe(res);
+                    } else {
+                        res.download(file.path, file.name);
+                    }
+                });
             });
         });
     }
@@ -828,7 +1006,6 @@ class FileController {
                     let currentId = dbEntry ? dbEntry.id : null;
 
                     if (!dbEntry) {
-                        // Create!
                         try {
                             const stats = await fs.promises.stat(fullPath);
                             currentId = await new Promise((resolve, reject) => {
@@ -843,14 +1020,11 @@ class FileController {
                                     else resolve(newId);
                                 });
                             });
-                            // Add to map so children find it
                             dbFiles.set(fullPath, { id: currentId, path: fullPath });
                         } catch (e) {
                             console.error(`Failed to register ${fullPath}:`, e);
                             continue;
                         }
-                    } else {
-                        // Exists. Use existing ID for children
                     }
 
                     if (item.isDirectory()) {
@@ -860,7 +1034,6 @@ class FileController {
             };
 
             // Start Scan
-            // Root items have parent_id = NULL
             scanAndSync(rootPath, null).then(() => {
                 // Return Unmarked
                 FileModel.findUnmarked((err, files) => {
@@ -871,6 +1044,83 @@ class FileController {
         });
     }
 
+    // Lock/Unlock Logic
+    static lock(req, res) {
+        const id = req.params.id;
+        const { password } = req.body;
+        const userId = req.user.id;
+
+        if (!password || password.length < 4) {
+            return res.status(400).json({ error: 'Password must be at least 4 characters' });
+        }
+
+        FileModel.findById(id, (err, file) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!file) return res.status(404).json({ error: 'File not found' });
+            if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
+
+            bcrypt.hash(password, 10, (err, hash) => {
+                if (err) return res.status(500).json({ error: 'Encryption failed' });
+                FileModel.lock(id, hash, (err) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    res.json({ message: 'File locked' });
+                });
+            });
+        });
+    }
+
+    static unlock(req, res) {
+        const id = req.params.id;
+        const { password } = req.body;
+        const userId = req.user.id;
+
+        FileModel.findById(id, (err, file) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!file) return res.status(404).json({ error: 'File not found' });
+
+            // Allow owner or shared users with password? Usually owner unlocks to remove lock.
+            // But here "unlock" might mean REMOVE lock, or just OPEN it?
+            // "Unlock" in context menu usually means Open (temporarily).
+            // But "Lock" logic sets is_locked=1. "Unlock" sets is_locked=0.
+            // So this method REMOVES the lock permanently. Only owner should do this.
+            if (file.user_id !== userId) return res.status(403).json({ error: 'Only owner can remove lock' });
+
+            FileModel.getPasswordHash(id, (err, hash) => {
+                if (err) return res.status(500).json({ error: err.message });
+                bcrypt.compare(password, hash, (err, match) => {
+                    if (err || !match) return res.status(401).json({ error: 'Incorrect password' });
+
+                    FileModel.unlock(id, (err) => {
+                        if (err) return res.status(500).json({ error: err.message });
+                        res.json({ message: 'File unlocked permanently' });
+                    });
+                });
+            });
+        });
+    }
+
+    static verifyPassword(req, res) {
+        const id = req.params.id;
+        const { password } = req.body;
+        // User could be anyone if shared, or owner.
+
+        FileModel.findById(id, (err, file) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!file) return res.status(404).json({ error: 'File not found' });
+            if (!file.is_locked) return res.json({ success: true, token: null }); // Not locked
+
+            FileModel.getPasswordHash(id, (err, hash) => {
+                if (err) return res.status(500).json({ error: err.message });
+                bcrypt.compare(password, hash, (err, match) => {
+                    if (err || !match) return res.status(401).json({ error: 'Incorrect password' });
+
+                    // Generate Access Token (valid for 1 hour)
+                    const token = jwt.sign({ fileId: id }, JWT_SECRET, { expiresIn: '1h' });
+                    res.json({ success: true, token });
+                });
+            });
+        });
+    }
     static allocate(req, res) {
         // Enforce admin access
         if (req.user.role !== 'admin') {
@@ -885,10 +1135,9 @@ class FileController {
         if (!targetUserId) {
             return res.status(400).json({ error: 'Target user is required' });
         }
-
         FileModel.allocate(fileIds, targetUserId, (err, changes) => {
             if (err) return res.status(500).json({ error: err.message });
-            res.json({ message: `Allocated ${changes} files successfully` });
+            res.json({ message: 'Allocated ' + changes + ' files successfully' });
         });
     }
 }

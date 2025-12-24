@@ -4,6 +4,7 @@ const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 module.exports = {
   packagerConfig: {
     asar: true,
+    icon: './src/ui/public/assets/logo', // Forge auto-adds .ico for Windows
     extraResource: [
       './resources/blip',
       './resources/python',

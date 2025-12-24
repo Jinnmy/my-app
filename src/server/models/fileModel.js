@@ -75,6 +75,34 @@ const initFileTable = () => {
         if (err) console.error('Error creating shared_files table:', err.message);
         else console.log('Shared files table ready.');
     });
+
+    // Migration: Add is_locked and password_hash
+    const lockSql = `ALTER TABLE files ADD COLUMN is_locked INTEGER DEFAULT 0`;
+    db.run(lockSql, (err) => {
+        if (!err) console.log('Added is_locked column to files table.');
+    });
+    const passSql = `ALTER TABLE files ADD COLUMN password_hash TEXT`;
+    db.run(passSql, (err) => {
+        if (!err) console.log('Added password_hash column to files table.');
+    });
+    // Create Share Links Table
+    const shareLinkSql = `
+        CREATE TABLE IF NOT EXISTS share_links (
+            token TEXT PRIMARY KEY,
+            file_id INTEGER NOT NULL,
+            created_by INTEGER,
+            expires_at DATETIME, -- NULL means no expiry
+            max_uses INTEGER,    -- NULL means unlimited
+            used_count INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `;
+    db.run(shareLinkSql, (err) => {
+        if (err) console.error('Error creating share_links table:', err.message);
+        else console.log('Share links table ready.');
+    });
 };
 
 initFileTable();
@@ -220,8 +248,14 @@ class FileModel {
         const sql = `UPDATE files SET name = ?, path = ?, caption = ?, tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
         const tagsStr = tags ? JSON.stringify(tags) : null;
 
+        console.log(`[FileModel] updateDetails called for ID: ${id}, Caption: "${caption ? caption.substring(0, 20) + '...' : 'null'}", Tags: ${tagsStr}`);
+
         db.run(sql, [name, path, caption, tagsStr, id], function (err) {
-            if (err) return callback(err);
+            if (err) {
+                console.error(`[FileModel] Update error for ${id}:`, err);
+                return callback(err);
+            }
+            console.log(`[FileModel] Update success for ${id}. Rows changed: ${this.changes}`);
 
             // 2. If it is a folder AND path changed, update all children paths
             if (type === 'folder' && path !== oldPath) {
@@ -278,6 +312,29 @@ class FileModel {
         });
     }
 
+    // Locking Methods
+    static lock(id, passwordHash, callback) {
+        const sql = `UPDATE files SET is_locked = 1, password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+        db.run(sql, [passwordHash, id], function (err) {
+            callback(err);
+        });
+    }
+
+    static unlock(id, callback) {
+        // Clear hash and unlock
+        const sql = `UPDATE files SET is_locked = 0, password_hash = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+        db.run(sql, [id], function (err) {
+            callback(err);
+        });
+    }
+
+    static getPasswordHash(id, callback) {
+        const sql = `SELECT password_hash FROM files WHERE id = ?`;
+        db.get(sql, [id], (err, row) => {
+            callback(err, row ? row.password_hash : null);
+        });
+    }
+
     static findTrashed(userId, callback) {
         const sql = `SELECT * FROM files WHERE user_id = ? AND is_deleted = 1 ORDER BY trashed_at DESC`;
         db.all(sql, [userId], (err, rows) => {
@@ -321,6 +378,35 @@ class FileModel {
         const sql = `SELECT 1 FROM shared_files WHERE file_id = ? AND user_id = ?`;
         db.get(sql, [fileId, userId], (err, row) => {
             callback(err, !!row);
+        });
+    }
+
+    // Share Link Methods
+    static createShareLink(fileId, userId, token, expiresAt, maxUses, callback) {
+        const sql = `INSERT INTO share_links (token, file_id, created_by, expires_at, max_uses) VALUES (?, ?, ?, ?, ?)`;
+        db.run(sql, [token, fileId, userId, expiresAt, maxUses], function (err) {
+            callback(err);
+        });
+    }
+
+    static findShareLink(token, callback) {
+        const sql = `SELECT * FROM share_links WHERE token = ?`;
+        db.get(sql, [token], (err, row) => {
+            callback(err, row);
+        });
+    }
+
+    static incrementShareLinkUsage(token, callback) {
+        const sql = `UPDATE share_links SET used_count = used_count + 1 WHERE token = ?`;
+        db.run(sql, [token], function (err) {
+            callback(err);
+        });
+    }
+
+    static deleteShareLink(token, callback) {
+        const sql = `DELETE FROM share_links WHERE token = ?`;
+        db.run(sql, [token], function (err) {
+            callback(err);
         });
     }
 

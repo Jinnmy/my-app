@@ -463,53 +463,18 @@ function createRecentFileCard(file) {
         fileCard.addEventListener('mousemove', window.moveTooltip);
     }
 
-    // Interaction (Same as files.js essentially)
-    if (file.type === 'folder') {
-        fileCard.addEventListener('dblclick', () => {
-            // Must redirect to Files page and open folder
-
-            // Check restriction before navigating
-            if (window.electronAPI && window.electronAPI.isElectron) {
-                alert('File browsing is only available in the web version.');
-                return;
-            }
-
-            // This is tricky because we are in Dashboard Home.
-            // Ideally we store "initialFolderId" in localStorage or URL param and switch to Files page.
-            // Simplified: Just go to files page root for now, or implement better deep linking later.
-            // A better way: 
-            window.location.hash = '#files'; // If we had hash routing
-            loadPage('files');
-            // And we'd need to tell it to open this folder. 
-            // We can hack it by setting a global variable or generic event.
-            // For now: Just load files page.
-            // Let's rely on User knowing to go to Files. 
-            // Or better:
-            // loadPage('files').then(() => { if(window.enterFolder) window.enterFolder(file.id, file.name); });
-            // But loadPage resets everything potentially.
-            // Let's keep it simple: DblClick on folder in recent goes to files.
-            alert('To browse this folder, go to "Files" in the sidebar.');
-        });
-    } else if (isImage) {
-        fileCard.addEventListener('dblclick', () => {
-            const token = localStorage.getItem('token');
-            window.open(`/api/files/download/${file.id}?token=${token}`, '_blank');
-        });
-    } else if (isVideo) {
-        fileCard.addEventListener('dblclick', () => {
-            // If playVideo is global (it is in files.js, but files.js is loaded... wait)
-            // files.js functions are global?
-            // "function playVideo" is not defined in the snippet I saw earlier (it was used but definition not shown or I missed it).
-            // It was probably further down in files.js.
-            // If it is global, we can call it.
-            if (window.playVideo) window.playVideo(file.id, file.name);
-            else alert('Video player not ready');
-        });
-    } else if (isDocx) {
-        fileCard.addEventListener('dblclick', () => {
-            if (window.editFile) window.editFile(file.id);
-        });
-    }
+    // Interaction - Click to Navigate to Files
+    fileCard.style.cursor = 'pointer';
+    fileCard.addEventListener('click', (e) => {
+        // Prevent navigation if clicking specific actions (like if we had buttons, but we don't here yet)
+        // Set pending navigation
+        window.pendingNavigate = {
+            parentId: file.parent_id || null, // Handle root files (null parent_id)
+            fileId: file.id
+        };
+        // Switch to files page
+        loadPage('files');
+    });
 
     return fileCard;
 }

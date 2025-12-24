@@ -117,6 +117,22 @@ class TransferModel {
             callback(err, this.changes);
         });
     }
+    static findLastBackup(userId, callback) {
+        // We look for transfers that are uploads and have the isBackup flag in metadata
+        // We use LIKE as a heuristic since JSON parsing in WHERE clauses depends on sqlite compile options
+        const sql = `SELECT * FROM transfers WHERE user_id = ? AND type = 'upload' AND metadata LIKE '%"isBackup":true%' ORDER BY created_at DESC LIMIT 1`;
+
+        db.get(sql, [userId], (err, row) => {
+            if (row && row.metadata) {
+                try {
+                    row.metadata = JSON.parse(row.metadata);
+                } catch (e) {
+                    row.metadata = {};
+                }
+            }
+            callback(err, row);
+        });
+    }
 }
 
 module.exports = TransferModel;

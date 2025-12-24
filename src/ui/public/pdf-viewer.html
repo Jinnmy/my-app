@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Viewer - NAS 2.0</title>
+    <link rel="icon" href="assets/logo.ico" type="image/x-icon">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f2f5;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .viewer-header {
+            background-color: #ffffff;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #ddd;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .file-info {
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: #333;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+
+        .viewer-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            margin: 0;
+            background: #525659;
+            /* Standard PDF reader background */
+            overflow: hidden;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="viewer-header">
+        <div class="file-info" id="file-name">Loading...</div>
+        <button class="btn btn-secondary" onclick="window.close()">Close</button>
+    </div>
+
+    <div class="viewer-container">
+        <iframe id="pdf-frame" src=""></iframe>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const fileId = urlParams.get('id');
+        const token = localStorage.getItem('token');
+
+        if (!token) {
+            alert('You must be logged in to view documents.');
+            window.location.href = 'index.html';
+        }
+
+        if (!fileId) {
+            alert('No file specified.');
+            window.close();
+        }
+
+        // Fetch file info to get name
+        async function init() {
+            try {
+                // We don't have a direct "get file info" API that is public readily available without listing,
+                // but we can assume the parent window passed it or we can just fetch the file content.
+                // Actually, the download endpoint sets the filename in Content-Disposition.
+                // But for the header, we might want to fetch metadata.
+                // Let's rely on the frame load or just set "PDF Document" if we can't get it easily.
+                // Or better, add a simple API to get file details if needed, but for now let's just use the ID or try to get metadata.
+
+                // Wait, we can assume the user came from the file list, maybe we pass name in URL?
+                // Passing name in URL is easiest for now.
+                const name = urlParams.get('name');
+                if (name) {
+                    document.getElementById('file-name').textContent = decodeURIComponent(name);
+                    document.title = decodeURIComponent(name) + ' - PDF Viewer';
+                }
+
+                const pdfFrame = document.getElementById('pdf-frame');
+                pdfFrame.src = `/api/files/download/${fileId}?token=${token}`;
+
+            } catch (error) {
+                console.error(error);
+                alert('Error loading PDF');
+            }
+        }
+
+        init();
+    </script>
+
+</body>
+
+</html>
