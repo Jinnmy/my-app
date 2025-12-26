@@ -9,6 +9,7 @@ window.initUsersPage = function () {
     const storageSlider = document.getElementById('storage_limit_slider');
     const storageInput = document.getElementById('storage_limit');
     const maxStorageDisplay = document.getElementById('max-storage-display');
+    const modalDeleteBtn = document.getElementById('modal-delete-btn');
     const token = localStorage.getItem('token');
     const user = JSON.parse(localStorage.getItem('user') || '{}');
 
@@ -164,6 +165,8 @@ window.initUsersPage = function () {
             // Setup slider for new user (current limit 0)
             setupStorageSlider(0); // Init with 0, will default to 10GB in setup
 
+            modalDeleteBtn.style.display = 'none'; // Hide delete button for new users
+
             userModal.classList.add('active');
         });
     }
@@ -183,7 +186,16 @@ window.initUsersPage = function () {
         document.getElementById('password').required = false;
         document.getElementById('password').placeholder = 'Leave blank to keep unchanged';
 
+        document.getElementById('password').placeholder = 'Leave blank to keep unchanged';
+
         setupStorageSlider(user.storage_limit);
+
+        // Show delete button and setup listener
+        modalDeleteBtn.style.display = 'block';
+        modalDeleteBtn.onclick = () => {
+            closeModal();
+            deleteUser(id);
+        };
 
         userModal.classList.add('active');
     }
@@ -247,7 +259,7 @@ window.initUsersPage = function () {
 
     // Delete User
     async function deleteUser(id) {
-        if (!confirm('Are you sure you want to delete this user?')) return;
+        if (!confirm('Are you sure you want to delete this user? All their files will be permanently deleted.')) return;
 
         try {
             const response = await fetch(`/api/users/${id}`, {

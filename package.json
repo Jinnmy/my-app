@@ -29,7 +29,7 @@
     "jsonwebtoken": "^9.0.3",
     "mammoth": "^1.11.0",
     "multer": "^2.0.2",
-    "pdf-parse": "^2.4.5",
+    "pdf-parse": "1.1.1",
     "socket.io": "^4.8.1",
     "sqlite3": "^5.1.7"
   },

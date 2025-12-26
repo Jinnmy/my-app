@@ -114,7 +114,14 @@
                 }
 
                 const pdfFrame = document.getElementById('pdf-frame');
-                pdfFrame.src = `/api/files/download/${fileId}?token=${token}`;
+                let src = `/api/files/download/${fileId}?token=${token}`;
+
+                const vaultKey = urlParams.get('vaultKey');
+                if (vaultKey) {
+                    src += `&vaultKey=${vaultKey}`;
+                }
+
+                pdfFrame.src = src;
 
             } catch (error) {
                 console.error(error);

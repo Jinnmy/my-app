@@ -1,0 +1,148 @@
+<div class="files-container vault-view">
+    <div class="files-toolbar">
+        <div class="breadcrumbs" id="breadcrumbs">
+            <span class="breadcrumb-item">Vault</span>
+        </div>
+        <div class="files-actions">
+            <!-- Hidden file input for uploads -->
+            <input type="file" id="file-input-hidden" style="display: none;" multiple>
+
+            <!-- Vault specific buttons -->
+            <button class="btn-secondary" id="btn-vault-lock">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                Lock Vault
+            </button>
+            <button class="btn-primary" id="btn-upload-file">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                Upload Encrypted
+            </button>
+        </div>
+    </div>
+
+    <!-- Vault State: Locked / Setup / Unlocked -->
+    <div class="files-content-area">
+        <div id="vault-loading" class="files-state" style="display: none;">
+            <div class="spinner"></div>
+            <p>Accessing Vault...</p>
+        </div>
+
+        <div id="files-loading" class="files-state" style="display: none;">
+            <div class="spinner"></div>
+            <p>Loading encrypted files...</p>
+        </div>
+
+        <!-- Locked State -->
+        <div id="vault-locked-state" class="files-state" style="display: none;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="1" class="empty-icon">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <h2>Vault is Locked</h2>
+            <p>Enter your password to access encrypted files.</p>
+            <div style="margin-top: 20px; display: flex; gap: 10px;">
+                <input type="password" id="vault-password-input" class="form-input" placeholder="Vault Password">
+                <button class="btn-primary" id="btn-unlock-vault">Unlock</button>
+            </div>
+            <p id="vault-unlock-error" class="error-text" style="margin-top: 10px;"></p>
+        </div>
+
+        <!-- Setup State -->
+        <div id="vault-setup-state" class="files-state" style="display: none;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="1" class="empty-icon">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <h2>Setup Vault</h2>
+            <p>Create a secure password to enable your Vault.</p>
+            <div style="margin-top: 20px; text-align: left; max-width: 300px;">
+                <label>Vault Password</label>
+                <input type="password" id="vault-setup-password" class="form-input"
+                    style="width: 100%; margin-bottom: 10px;">
+                <label>Confirm Password</label>
+                <input type="password" id="vault-setup-confirm" class="form-input"
+                    style="width: 100%; margin-bottom: 20px;">
+                <button class="btn-primary" id="btn-enable-vault" style="width: 100%;">Create Vault</button>
+            </div>
+        </div>
+
+        <!-- Empty State (Unlocked) -->
+        <div id="files-empty-state" class="files-state" style="display: none;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="1" class="empty-icon">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <p>Vault is empty</p>
+            <button class="btn-text" onclick="document.getElementById('file-input-hidden').click()">Upload Encrypted
+                File</button>
+        </div>
+
+        <div id="file-grid" class="file-grid" style="display: none;">
+            <!-- Files will be injected here -->
+        </div>
+    </div>
+
+    <!-- Reuse Context Menu & Modals from files.html if possible, or duplicate/inject via JS -->
+    <!-- Ideally, we share the same modal containers if they are in the layout, but they are in pages. -->
+    <!-- We'll replicate the core modals needed: Video, Metadata, Share (maybe disabled for vault?) -->
+    <!-- For simplicity, Vault files might have limited actions initially. -->
+
+    <div id="context-menu" class="context-menu">
+        <div class="context-menu-item" id="ctx-download">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Download Decrypted
+        </div>
+        <div class="context-menu-item delete" id="ctx-delete">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2-2v2"></path>
+            </svg>
+            Delete Permanently
+        </div>
+    </div>
+
+    <!-- Video Modal -->
+    <div id="video-modal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 800px; background: #000;">
+            <div class="modal-header">
+                <h3 id="video-title">Playing Encrypted Video</h3>
+                <span class="close" id="close-video-modal">&times;</span>
+            </div>
+            <div class="modal-body" style="padding: 0; display: flex; justify-content: center;">
+                <video id="video-player" controls preload="metadata" style="max-width: 100%; max-height: 80vh;">
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+        </div>
+    </div>
+
+    <!-- Transfer Panel (Shared logic should find this) -->
+    <div id="transfer-panel" class="transfer-panel collapsed" style="display: none;">
+        <div class="transfer-header" id="transfer-toggle">
+            <div class="transfer-title">
+                <span>Transfers</span>
+            </div>
+            <div class="transfer-controls">
+                <span id="transfer-count" class="badge">0</span>
+            </div>
+        </div>
+        <div class="transfer-list" id="transfer-list"></div>
+    </div>
+</div>

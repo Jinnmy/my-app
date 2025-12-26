@@ -147,6 +147,16 @@ body {
     color: white;
 }
 
+.sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.mt-auto {
+    margin-top: auto;
+}
+
 .nav-item {
     padding: 0.75rem 1rem;
     border-radius: 8px;
@@ -1226,4 +1236,49 @@ body {
     .search-container input {
         width: 150px !important;
     }
+}
+
+/* Tooltip Styles */
+.file-tooltip {
+    position: fixed;
+    z-index: 9999;
+    background: rgba(15, 23, 42, 0.95);
+    color: white;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(4px);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+    max-width: 300px; /* Constrain width */
+    pointer-events: none; /* Don't interfere with mouse */
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.tooltip-header {
+    font-weight: 600;
+    margin-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 4px;
+    word-break: break-all;
+}
+
+.tooltip-caption {
+    color: #cbd5e1;
+    margin-bottom: 8px;
+    word-wrap: break-word; /* Ensure text wraps */
+}
+
+.tooltip-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.tooltip-tag {
+    background: var(--primary-color);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
 }

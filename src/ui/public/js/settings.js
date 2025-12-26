@@ -243,6 +243,90 @@ async function initSettingsPage() {
     }
 
 
+    // --- Vault Settings Logic ---
+    const vaultStatusText = document.getElementById('vaultStatusText');
+    const vaultStatusBadge = document.getElementById('vaultStatusBadge');
+    const vaultActions = document.getElementById('vaultActions');
+    const vaultEnableAction = document.getElementById('vaultEnableAction');
+    const btnChangeVaultPass = document.getElementById('btnChangeVaultPass');
+    const btnDisableVault = document.getElementById('btnDisableVault');
+
+    const checkVaultSettings = async () => {
+        if (!vaultStatusText) return; // Feature not present
+
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('/api/vault/status', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                if (data.enabled) {
+                    vaultStatusText.textContent = 'Active';
+                    vaultStatusBadge.textContent = 'Enabled';
+                    vaultStatusBadge.style.background = 'rgba(16, 185, 129, 0.2)';
+                    vaultStatusBadge.style.color = '#10b981';
+
+                    vaultActions.style.display = 'block';
+                    vaultEnableAction.style.display = 'none';
+                } else {
+                    vaultStatusText.textContent = 'Not Configured';
+                    vaultStatusBadge.textContent = 'Disabled';
+                    vaultStatusBadge.style.background = '#333';
+                    vaultStatusBadge.style.color = '#888';
+
+                    vaultActions.style.display = 'none';
+                    vaultEnableAction.style.display = 'block';
+                }
+            }
+        } catch (e) {
+            console.error('Vault check failed', e);
+        }
+    };
+
+    // Initial Check
+    checkVaultSettings();
+
+    // Handlers
+    if (btnDisableVault) {
+        btnDisableVault.onclick = async () => {
+            const password = prompt("To DISABLE the vault and DELETE ALL ENCRYPTED FILES, please enter your vault password:");
+            if (!password) return;
+
+            if (!confirm("FINAL WARNING: This will permanently delete all files in your vault. This cannot be undone. Are you sure?")) return;
+
+            try {
+                const token = localStorage.getItem('token');
+                const res = await fetch('/api/vault/disable', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ password })
+                });
+
+                if (res.ok) {
+                    alert('Vault disabled and cleared.');
+                    checkVaultSettings();
+                } else {
+                    const err = await res.json();
+                    alert('Failed: ' + (err.error || 'Incorrect password'));
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Error disabling vault');
+            }
+        };
+    }
+
+    if (btnChangeVaultPass) {
+        btnChangeVaultPass.onclick = () => {
+            alert('To change your password, please disable and re-enable the vault (Note: This will clear current files). Password rotation without data loss is not yet supported.');
+        };
+    }
+
 }
 
 // Expose to window so app.js can call it

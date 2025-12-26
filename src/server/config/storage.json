@@ -1,0 +1,7 @@
+{
+  "disks": [
+    "3"
+  ],
+  "raidLevel": "existing",
+  "volumePath": "D:\\"
+}

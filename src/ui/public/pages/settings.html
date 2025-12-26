@@ -18,6 +18,7 @@
     </div>
 </div>
 
+
 <div class="settings-section" style="margin-top: 20px;">
     <h3>AI Features</h3>
     <p style="color: #aaa; font-size: 13px; margin-bottom: 15px;">
@@ -54,6 +55,46 @@
                 </div>
                 Downloading models... this may take a while.
             </div>
+        </div>
+    </div>
+</div>
+
+<div class="settings-section" style="margin-top: 20px;">
+    <h3>Vault Security</h3>
+    <p style="color: #aaa; font-size: 13px; margin-bottom: 15px;">
+        Manage your encrypted vault settings.
+    </p>
+
+    <div class="setting-item"
+        style="display: flex; flex-direction: column; max-width: 400px; margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+
+        <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+            <div>
+                <strong style="display: block; font-size: 16px;">Secure Vault</strong>
+                <div id="vaultStatusText" style="font-size: 13px; color: #aaa; margin-top: 4px;">Checking status...
+                </div>
+            </div>
+            <div id="vaultStatusBadge"
+                style="padding: 4px 8px; border-radius: 4px; font-size: 12px; background: #333; color: #888;">Unknown
+            </div>
+        </div>
+
+        <div id="vaultActions"
+            style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px; display: none;">
+            <button id="btnChangeVaultPass" class="btn-secondary" style="width: 100%; margin-bottom: 10px;">
+                Change Password
+            </button>
+            <button id="btnDisableVault" class="btn-danger" style="width: 100%;">
+                Disable Vault
+            </button>
+            <p style="font-size: 11px; color: #aaa; margin-top: 8px; text-align: center;">Disabling vault will
+                permanently delete all encrypted files.</p>
+        </div>
+
+        <div id="vaultEnableAction"
+            style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px; display: none;">
+            <p style="font-size: 13px; color: #aaa; margin-bottom: 10px;">Vault is not enabled. Go to the "Vault" tab to
+                set it up.</p>
         </div>
     </div>
 </div>

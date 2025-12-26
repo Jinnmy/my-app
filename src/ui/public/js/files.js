@@ -2,9 +2,16 @@
 
 let currentPath = []; // Breadcrumb path: array of {id, name}
 let currentParentId = null;
+let isVaultMode = false;
+let vaultKey = null; // Stored in memory only (or sessionStorage)
 
 async function initFilesPage() {
     console.log('Initializing Files Page');
+    isVaultMode = false;
+    vaultKey = null;
+    const vaultView = document.querySelector('.vault-view');
+    if (vaultView) vaultView.style.display = 'none'; // Safety
+
     // Check for pending navigation from Dashboard
     if (window.pendingNavigate) {
         const { parentId, fileId } = window.pendingNavigate;
@@ -72,14 +79,28 @@ async function loadFiles(parentId, page = 1) {
     paginationContainer.style.display = 'none';
 
     try {
-        let url = parentId ? `/api/files?parentId=${parentId}` : '/api/files';
+        let url = '';
+        const token = localStorage.getItem('token');
+        const headers = { 'Authorization': `Bearer ${token}` };
+
+        if (isVaultMode) {
+            if (!vaultKey) {
+                console.error("Missing vault key");
+                return;
+            }
+            url = '/api/files/encrypted';
+            // Parent ID handling for vault folders (if supported later)
+            if (parentId) url += `?parentId=${parentId}`;
+            headers['x-vault-key'] = vaultKey;
+        } else {
+            url = parentId ? `/api/files?parentId=${parentId}` : '/api/files';
+        }
+
         // Append pagination params
         url += (url.includes('?') ? '&' : '?') + `page=${page}&limit=${itemsPerPage}`;
 
         const response = await fetch(url, {
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('token')}`
-            }
+            headers: headers
         });
 
         if (!response.ok) throw new Error('Failed to fetch files');
@@ -176,6 +197,7 @@ function renderFiles(files) {
         fileCard.dataset.type = file.type;
         fileCard.dataset.name = file.name;
         if (file.is_locked) fileCard.dataset.locked = "true";
+        if (file.is_encrypted) fileCard.dataset.encrypted = "true";
 
         // Add metadata for tooltip
         if (file.caption) fileCard.dataset.caption = file.caption;
@@ -203,6 +225,13 @@ function renderFiles(files) {
             const imageUrl = file.is_locked ? '/assets/lock-placeholder.png' : `/api/files/download/${file.id}?token=${token}`;
             if (file.is_locked) {
                 icon = `<svg xmlns="http://www.w3.org/2000/svg" class="file-icon" viewBox="0 0 24 24" fill="#888"><path d="M12 1.5a5.25 5.25 0 00-5.25 5.25v3H5.25A2.25 2.25 0 003 12v7.5A2.25 2.25 0 005.25 21.75h13.5A2.25 2.25 0 0021 19.5V12a2.25 2.25 0 00-2.25-2.25h-1.5v-3A5.25 5.25 0 0012 1.5zM8.25 6.75a3.75 3.75 0 117.5 0v3h-7.5v-3z"/></svg>`;
+            } else if (file.is_encrypted) {
+                // Encrypted files don't have thumbnails for now, or we need to fetch them with key
+                // For now use a generic lock/encrypted icon
+                icon = `<svg xmlns="http://www.w3.org/2000/svg" class="file-icon" viewBox="0 0 24 24" fill="var(--primary-color)">
+                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                     <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                 </svg>`;
             } else {
                 icon = `<img src="${imageUrl}" alt="${file.name}" class="file-preview-img" loading="lazy" />`;
             }
@@ -232,6 +261,7 @@ function renderFiles(files) {
                 <div class="file-meta">${file.type === 'folder' ? 'Folder' : formatBytes(file.size)}</div>
             </div>
             ${file.is_locked ? '<div class="lock-overlay"><i class="fas fa-lock"></i></div>' : ''}
+            ${file.is_encrypted ? '<div class="lock-overlay" style="color: var(--primary-color)"><i class="fas fa-key"></i></div>' : ''}
         `;
 
         // If locked, single click prompts password (for view)
@@ -264,8 +294,18 @@ function renderFiles(files) {
 
             if (isImage) {
                 fileCard.addEventListener('click', () => {
+                    console.log('Image Clicked:', file.name);
+                    console.log('isVaultMode:', isVaultMode);
+                    console.log('isEncrypted:', file.is_encrypted);
+                    console.log('vaultKey:', vaultKey ? 'PRESENT' : 'MISSING');
+
                     const token = localStorage.getItem('token');
-                    window.open(`/api/files/download/${file.id}?token=${token}`, '_blank');
+                    let url = `/api/files/download/${file.id}?token=${token}`;
+                    if (isVaultMode && file.is_encrypted && vaultKey) {
+                        url += `&vaultKey=${vaultKey}`;
+                    }
+                    console.log('Opening URL:', url);
+                    window.open(url, '_blank');
                 });
             }
 
@@ -277,7 +317,17 @@ function renderFiles(files) {
 
             if (isPdf) {
                 fileCard.addEventListener('click', () => {
-                    window.open(`pdf-viewer.html?id=${file.id}&name=${encodeURIComponent(file.name)}`, '_blank');
+                    // isPdf already confirms it's a PDF file
+                    const token = localStorage.getItem('token');
+                    let viewerUrl = `pdf-viewer.html?id=${file.id}&name=${encodeURIComponent(file.name)}`;
+
+                    if (isVaultMode && file.is_encrypted) {
+                        if (vaultKey) {
+                            viewerUrl += `&vaultKey=${vaultKey}`;
+                        }
+                    }
+
+                    window.open(viewerUrl, '_blank');
                 });
             }
 
@@ -301,6 +351,15 @@ function renderFiles(files) {
         fileCard.addEventListener('mouseenter', (e) => showTooltip(e, fileCard));
         fileCard.addEventListener('mouseleave', hideTooltip);
         fileCard.addEventListener('mousemove', moveTooltip);
+
+        if (file.is_encrypted && isVaultMode) {
+            // Only add generic download if not handled by known viewers
+            if (!isPdf && !isImage && !isVideo) {
+                fileCard.addEventListener('click', () => {
+                    downloadFile(file.id, null, true); // true = isEncrypted
+                });
+            }
+        }
 
         fileGrid.appendChild(fileCard);
     });
@@ -427,11 +486,18 @@ async function handleFileUpload(e) {
         formData.append('file', file);
 
         try {
+            const headers = {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            };
+
+            if (isVaultMode && vaultKey) {
+                headers['x-vault-key'] = vaultKey;
+                formData.append('isEncrypted', 'true');
+            }
+
             const response = await fetch('/api/files/upload', {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`
-                },
+                headers: headers,
                 body: formData
             });
 
@@ -475,6 +541,7 @@ let contextMenuFileId = null;
 let contextMenuFileType = null;
 let contextMenuFileName = null;
 let contextMenuIsLocked = false;
+let contextMenuIsEncrypted = false;
 
 function setupContextMenu() {
     const fileGrid = document.getElementById('file-grid');
@@ -497,8 +564,9 @@ function setupContextMenu() {
             const type = fileCard.dataset.type;
             const name = fileCard.dataset.name;
             const locked = fileCard.dataset.locked === "true";
+            const encrypted = fileCard.dataset.encrypted === "true";
 
-            showContextMenu(e.pageX, e.pageY, id, type, name, locked);
+            showContextMenu(e.pageX, e.pageY, id, type, name, locked, encrypted);
         }
     });
 
@@ -529,7 +597,7 @@ function setupContextMenu() {
     downloadBtn.onclick = () => {
         if (contextMenuFileId && contextMenuFileType !== 'folder') {
             const executeDownload = (token) => {
-                downloadFile(contextMenuFileId, token);
+                downloadFile(contextMenuFileId, token, contextMenuIsEncrypted);
             };
             if (contextMenuIsLocked) {
                 promptUnlock(contextMenuFileId, false, executeDownload);
@@ -600,7 +668,7 @@ function setupContextMenu() {
                         if (typeof tags === 'string') tags = JSON.parse(tags);
                     } catch (e) { tags = []; }
 
-                    openMetadataModal(contextMenuFileId, contextMenuFileName, caption, tags, token);
+                    openMetadataModal(contextMenuFileId, contextMenuFileName, caption, tags, token, contextMenuFileType);
                     contextMenu.style.display = 'none';
                 };
 
@@ -633,7 +701,7 @@ function setupContextMenu() {
 }
 
 
-function showContextMenu(x, y, id, type, name, locked) {
+function showContextMenu(x, y, id, type, name, locked, encrypted = false) {
     hideTooltip();
     const contextMenu = document.getElementById('context-menu');
     const downloadBtn = document.getElementById('ctx-download');
@@ -646,6 +714,7 @@ function showContextMenu(x, y, id, type, name, locked) {
     contextMenuFileType = type;
     contextMenuFileName = name;
     contextMenuIsLocked = locked;
+    contextMenuIsEncrypted = encrypted;
 
     // Position Menu
     contextMenu.style.top = `${y}px`;
@@ -702,7 +771,7 @@ async function deleteFile(id, unlockToken = null) {
     }
 }
 
-function downloadFile(id, unlockToken = null) {
+function downloadFile(id, unlockToken = null, isEncrypted = false) {
     const token = localStorage.getItem('token');
     let url = `/api/files/download/${id}`;
 
@@ -710,6 +779,24 @@ function downloadFile(id, unlockToken = null) {
     const params = new URLSearchParams();
     params.append('token', token);
     if (unlockToken) params.append('unlockToken', unlockToken);
+
+    // For encrypted files, we need the vault key.
+    // If it's a direct browser download (window.open or <a> click), we can't easily set headers.
+    // We MUST pass the key in query param. This is a security tradeoff for usability.
+    // Ideally user downloads via blob, but for large files that's memory intensive.
+    // We'll use a short-lived token or just pass the key if it's localhost (low risk).
+    // The previous implementation decided to pass key in header for API calls. 
+    // For download links, we need to pass it in query if we want direct streaming.
+
+    if (isEncrypted && isVaultMode && vaultKey) {
+        // Warning: Exposing key in URL history if not careful. 
+        // Better approach: One-time token. But for now, let's check backend support.
+        // Backend 'download' checks header OR query '?key'.
+        // Let's assume we can pass it.
+        // Wait, my backend implementation in fileController.js checked:
+        // const vaultKey = req.headers['x-vault-key'] || req.query.vaultKey;
+        params.append('vaultKey', vaultKey);
+    }
 
     url += `?${params.toString()}`;
 
@@ -1648,6 +1735,7 @@ function moveTooltip(e) {
 
 let metadataFileId = null;
 let currentTags = [];
+let metadataFileExtension = '';
 
 function setupMetadataModal() {
     const modal = document.getElementById('metadata-modal');
@@ -1681,7 +1769,10 @@ function setupMetadataModal() {
 
     if (saveBtn) {
         saveBtn.onclick = async () => {
-            const name = document.getElementById('meta-name').value;
+            let name = document.getElementById('meta-name').value;
+            if (metadataFileExtension) {
+                name += metadataFileExtension;
+            }
             const caption = document.getElementById('meta-caption').value;
             await saveMetadata(metadataFileId, name, caption, currentTags);
             closeModal();
@@ -1689,11 +1780,31 @@ function setupMetadataModal() {
     }
 }
 
-function openMetadataModal(id, name, caption, tags) {
+function openMetadataModal(id, name, caption, tags, token, type) {
     metadataFileId = id;
     currentTags = Array.isArray(tags) ? [...tags] : []; // copy
 
-    document.getElementById('meta-name').value = name || '';
+    // Handle extension separation
+    const extensionSpan = document.getElementById('meta-extension');
+    const nameInput = document.getElementById('meta-name');
+
+    // Reset
+    metadataFileExtension = '';
+    extensionSpan.innerText = '';
+
+    if (type !== 'folder' && name && name.includes('.')) {
+        const lastDotIndex = name.lastIndexOf('.');
+        if (lastDotIndex > 0) {
+            metadataFileExtension = name.substring(lastDotIndex);
+            nameInput.value = name.substring(0, lastDotIndex);
+            extensionSpan.innerText = metadataFileExtension;
+        } else {
+            nameInput.value = name;
+        }
+    } else {
+        nameInput.value = name || '';
+    }
+
     document.getElementById('meta-caption').value = caption || '';
     renderTags();
 
@@ -1757,8 +1868,36 @@ async function initTrashPage() {
 
     const emptyBtn = document.getElementById('btn-empty-trash');
     if (emptyBtn) {
-        emptyBtn.style.display = 'none';
-        // Optional: Manual empty trash trigger could go here
+        // Show button initially? Or only if files exist? 
+        // Let's show it, loadTrashedFiles will handle empty state visibility, 
+        // but the button belongs to the toolbar.
+        emptyBtn.style.display = 'flex';
+
+        emptyBtn.onclick = async () => {
+            if (confirm('Are you sure you want to permanently delete all items in the trash? This cannot be undone.')) {
+                await emptyTrash();
+            }
+        };
+    }
+}
+
+async function emptyTrash() {
+    try {
+        const response = await fetch('/api/files/trash', {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+
+        if (response.ok) {
+            loadTrashedFiles();
+            if (window.updateUserData) window.updateUserData(); // Refresh storage stats
+        } else {
+            const data = await response.json();
+            alert(data.error || 'Failed to empty trash');
+        }
+    } catch (e) {
+        console.error('Empty trash error:', e);
+        alert('Failed to empty trash');
     }
 }
 
@@ -1906,4 +2045,202 @@ async function permanentDeleteFile(id) {
             alert('Failed to delete');
         }
     } catch (e) { console.error(e); }
+}
+
+
+// --- Vault Logic ---
+
+window.initVaultPage = async function () {
+    console.log('Initializing Vault Page');
+    isVaultMode = true;
+    currentParentId = null; // Vault root
+    currentPath = [{ id: null, name: 'Vault' }];
+
+    // UI Elements
+    const grid = document.getElementById('files-content-area');
+    const vaultLocked = document.getElementById('vault-locked-state');
+    const vaultSetup = document.getElementById('vault-setup-state');
+    const vaultLoading = document.getElementById('vault-loading');
+
+    // Reset Views
+    document.getElementById('file-grid').style.display = 'none';
+    document.getElementById('files-empty-state').style.display = 'none';
+    if (vaultLocked) vaultLocked.style.display = 'none';
+    if (vaultSetup) vaultSetup.style.display = 'none';
+    if (vaultLoading) vaultLoading.style.display = 'flex';
+
+    setupVaultEventListeners();
+    setupContextMenu();
+
+    await checkVaultStatus();
+};
+
+async function checkVaultStatus() {
+    try {
+        const response = await fetch('/api/vault/status', {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            document.getElementById('vault-loading').style.display = 'none';
+
+            if (data.enabled) {
+                if (vaultKey) {
+                    showVaultUnlocked();
+                } else {
+                    showVaultLocked();
+                }
+            } else {
+                showVaultSetup();
+            }
+        } else {
+            console.error('Failed to get vault status');
+            alert('Failed to connect to Vault service');
+        }
+    } catch (e) {
+        console.error('Vault status error', e);
+        document.getElementById('vault-loading').style.display = 'none';
+        alert('Data network error');
+    }
+}
+
+function showVaultLocked() {
+    document.getElementById('vault-locked-state').style.display = 'flex';
+    document.getElementById('vault-setup-state').style.display = 'none';
+    document.getElementById('file-grid').style.display = 'none';
+    document.getElementById('files-empty-state').style.display = 'none';
+    document.getElementById('btn-upload-file').style.display = 'none';
+    document.getElementById('btn-vault-lock').style.display = 'none';
+}
+
+function showVaultSetup() {
+    document.getElementById('vault-locked-state').style.display = 'none';
+    document.getElementById('vault-setup-state').style.display = 'flex';
+    document.getElementById('file-grid').style.display = 'none';
+    document.getElementById('files-empty-state').style.display = 'none';
+    document.getElementById('btn-upload-file').style.display = 'none';
+    document.getElementById('btn-vault-lock').style.display = 'none';
+}
+
+function showVaultUnlocked() {
+    document.getElementById('vault-locked-state').style.display = 'none';
+    document.getElementById('vault-setup-state').style.display = 'none';
+    document.getElementById('vault-loading').style.display = 'none';
+
+    // Show actions
+    document.getElementById('btn-upload-file').style.display = 'flex';
+    document.getElementById('btn-vault-lock').style.display = 'flex';
+
+    loadFiles(null);
+}
+
+async function unlockVault() {
+    const passwordInput = document.getElementById('vault-password-input');
+    const password = passwordInput.value;
+    const errorMsg = document.getElementById('vault-unlock-error');
+
+    if (!password) {
+        errorMsg.textContent = 'Password required';
+        return;
+    }
+
+    errorMsg.textContent = 'Verifying...';
+
+    try {
+        const response = await fetch('/api/vault/verify', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ password })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            vaultKey = data.vaultKey;
+            passwordInput.value = '';
+            errorMsg.textContent = '';
+            showVaultUnlocked();
+        } else {
+            errorMsg.textContent = data.error || 'Incorrect password';
+        }
+    } catch (e) {
+        console.error(e);
+        errorMsg.textContent = 'Connection error';
+    }
+}
+
+async function enableVault() {
+    const p1 = document.getElementById('vault-setup-password').value;
+    const p2 = document.getElementById('vault-setup-confirm').value;
+
+    if (!p1 || p1.length < 4) {
+        alert('Password must be at least 4 characters');
+        return;
+    }
+
+    if (p1 !== p2) {
+        alert('Passwords do not match');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/vault/enable', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ password: p1 })
+        });
+
+        if (response.ok) {
+            alert('Vault enabled! Please unlock it now.');
+            checkVaultStatus();
+        } else {
+            alert('Failed to enable vault');
+        }
+    } catch (e) {
+        console.error(e);
+        alert('Error enabling vault');
+    }
+}
+
+function setupVaultEventListeners() {
+    const unlockBtn = document.getElementById('btn-unlock-vault');
+    if (unlockBtn) unlockBtn.onclick = unlockVault;
+
+    const enableBtn = document.getElementById('btn-enable-vault');
+    if (enableBtn) enableBtn.onclick = enableVault;
+
+    const lockBtn = document.getElementById('btn-vault-lock');
+    if (lockBtn) {
+        lockBtn.onclick = () => {
+            vaultKey = null;
+            showVaultLocked();
+        };
+    }
+
+    // Also bind Enter key for password inputs
+    const passInput = document.getElementById('vault-password-input');
+    if (passInput) {
+        passInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') unlockVault();
+        });
+    }
+
+    // Bind Upload Actions (Copied/Adapted from setupFileEventListeners)
+    const uploadBtn = document.getElementById('btn-upload-file');
+    const fileInput = document.getElementById('file-input-hidden');
+
+    if (uploadBtn && fileInput) {
+        uploadBtn.onclick = () => fileInput.click();
+    }
+
+    if (fileInput) {
+        fileInput.onchange = handleFileUpload;
+    }
 }

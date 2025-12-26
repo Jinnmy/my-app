@@ -22,6 +22,7 @@ const transferRoutes = require('./routes/transferRoutes');
 const editorRoutes = require('./routes/editorRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 const backupRoutes = require('./routes/backupRoutes');
+const vaultRoutes = require('./routes/vaultRoutes');
 const TransferService = require('./services/transferService');
 
 require('./socket')(io);
@@ -34,6 +35,7 @@ app.use('/api/transfers', transferRoutes);
 app.use('/api/editor', editorRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/backup', backupRoutes);
+app.use('/api/vault', vaultRoutes);
 
 // Start the transfer background worker
 TransferService.start();

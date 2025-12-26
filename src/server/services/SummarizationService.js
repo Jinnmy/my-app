@@ -78,7 +78,10 @@ class SummarizationService {
                         console.error(`Summarization failed with code ${code}. Error: ${errorData}`);
                         reject(new Error(`Process exited with code ${code}: ${errorData}`));
                     } else {
-                        const summary = outputData.trim();
+                        let summary = outputData.trim();
+                        if (summary.length > 150) {
+                            summary = summary.substring(0, 147) + '...';
+                        }
                         console.log(`Summary generated successfully.`);
                         resolve(summary);
                     }

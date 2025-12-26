@@ -161,7 +161,10 @@
             <div class="modal-body">
                 <div class="form-group" style="margin-bottom: 15px;">
                     <label for="meta-name" style="display: block; margin-bottom: 5px;">Name</label>
-                    <input type="text" id="meta-name" class="form-input" style="width: 100%;" placeholder="File name">
+                    <div style="display: flex; align-items: center;">
+                        <input type="text" id="meta-name" class="form-input" style="flex: 1;" placeholder="File name">
+                        <span id="meta-extension" style="margin-left: 5px; color: #888;"></span>
+                    </div>
                 </div>
                 <div class="form-group" style="margin-bottom: 15px;">
                     <label for="meta-caption" style="display: block; margin-bottom: 5px;">Caption</label>

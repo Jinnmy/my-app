@@ -11,7 +11,7 @@
         style="width: 100%; max-width: 400px; padding: 8px 12px; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff;">
     <div id="search-results-dropdown" class="search-results-dropdown"></div>
 </div>
-<div class="user-profile">
+<div class="user-profile" id="userProfileSection" style="cursor: pointer; position: relative;">
     <div class="storage-info" id="storageInfoContainer" style="display: none;">
         <div class="storage-text">
             <span>Storage: </span>
@@ -23,5 +23,27 @@
     </div>
     <span id="userNameDisplay">Loading...</span>
     <div class="avatar" id="userAvatar">U</div>
+
+    <!-- Profile Dropdown -->
+    <div id="profileDropdown"
+        style="display: none; position: absolute; top: 100%; right: 0; background: #222; border: 1px solid #444; border-radius: 6px; padding: 10px; width: 220px; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.3); margin-top: 5px;">
+        <div style="padding-bottom: 10px; border-bottom: 1px solid #333; margin-bottom: 10px;">
+            <div style="font-weight: bold; color:white;" id="dropdownUserName">User</div>
+            <div style="font-size: 11px; color: #aaa;" id="dropdownUserEmail">email@example.com</div>
+        </div>
+
+        <!-- Vault Toggle Item -->
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 5px 0;">
+            <span style="font-size: 13px; color: #ddd;">Show Vault</span>
+            <label class="switch" style="position: relative; display: inline-block; width: 40px; height: 20px;">
+                <input type="checkbox" id="dropdownVaultToggle">
+                <span class="slider round"
+                    style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px;"></span>
+            </label>
+        </div>
+
+        <!-- Separator -->
+        <div style="height: 1px; background: #333; margin: 10px 0;"></div>
+    </div>
 </div>
 <button id="logoutBtn" class="logout-btn">Sign Out</button>

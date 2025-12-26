@@ -78,9 +78,6 @@ class FileController {
 
                 const totalPages = Math.ceil(total / limit);
 
-                // Check if client expects simple array (legacy) or we just break it.
-                // Given the instruction "can you implement pagination", we assume we update the contract.
-                // We return a structured object.
                 res.json({
                     files,
                     pagination: {
@@ -91,6 +88,22 @@ class FileController {
                     }
                 });
             });
+        });
+    }
+
+    static listVault(req, res) {
+        const userId = req.user.id;
+        let page = parseInt(req.query.page) || 1;
+        let limit = parseInt(req.query.limit) || 100;
+        if (page < 1) page = 1;
+
+        const offset = (page - 1) * limit;
+
+        // Simplification: We don't have countEncrypted yet, but let's assume UI handles it or we add it later.
+        // For now, just fetch.
+        FileModel.findEncrypted(userId, limit, offset, (err, files) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ files, pagination: { page, limit } });
         });
     }
 
@@ -207,6 +220,14 @@ class FileController {
                 }
 
                 // Create Transfer Record
+                const isEncrypted = req.body.isEncrypted === 'true' || req.body.isEncrypted === true;
+                const vaultKey = req.headers['x-vault-key'];
+
+                if (isEncrypted && !vaultKey) {
+                    fs.unlink(file.path, () => { });
+                    return res.status(400).json({ error: 'Vault key required for encrypted upload' });
+                }
+
                 TransferModel.create({
                     user_id: userId,
                     type: 'upload',
@@ -216,9 +237,10 @@ class FileController {
                         originalname: file.originalname,
                         size: file.size,
                         mimetype: file.mimetype,
-                        mimetype: file.mimetype,
                         parentId: (parentId && parentId !== 'null' && parentId !== 'undefined') ? parentId : null,
-                        isBackup: req.body.isBackup === 'true' || req.body.isBackup === true // Capture isBackup flag
+                        isBackup: req.body.isBackup === 'true' || req.body.isBackup === true,
+                        isEncrypted: isEncrypted,
+                        vaultKey: vaultKey // Storing key in metadata for async processing
                     }
                 }, (err, transfer) => {
                     if (err) {
@@ -232,14 +254,35 @@ class FileController {
 
         // Determine final destination path (Moved inside callback above to chain correctly)
         const resolveDestination = (cb) => {
+            const findUniquePath = (dir, name) => {
+                let finalName = name;
+                let finalPath = path.join(dir, finalName);
+                let counter = 1;
+
+                const ext = path.extname(name);
+                const base = path.basename(name, ext);
+
+                while (fs.existsSync(finalPath)) {
+                    finalName = `${base} (${counter})${ext}`;
+                    finalPath = path.join(dir, finalName);
+                    counter++;
+                }
+                return { finalPath, finalName };
+            };
+
             if (parentId && parentId !== 'null' && parentId !== 'undefined') {
                 FileModel.findById(parentId, (err, parent) => {
                     if (err) return cb(err);
                     if (!parent) return cb(new Error('Parent folder not found'));
-                    cb(null, path.join(parent.path, file.originalname));
+
+                    const { finalPath, finalName } = findUniquePath(parent.path, file.originalname);
+                    file.originalname = finalName; // Update metadata
+                    cb(null, finalPath);
                 });
             } else {
-                cb(null, path.join(rootPath, file.originalname));
+                const { finalPath, finalName } = findUniquePath(rootPath, file.originalname);
+                file.originalname = finalName; // Update metadata
+                cb(null, finalPath);
             }
         };
     }
@@ -297,6 +340,74 @@ class FileController {
                         } catch (e) {
                             return res.status(403).json({ error: 'Invalid or expired unlock token' });
                         }
+                    }
+
+                    // Check Encryption
+                    if (file.is_encrypted) {
+                        console.log('Download: Encrypted file request');
+                        console.log('Headers:', req.headers);
+                        console.log('Query:', req.query);
+                        const vaultKey = req.headers['x-vault-key'] || req.query.key || req.query.vaultKey; // Support query param for media tags
+                        console.log('Vault Key Found:', vaultKey ? 'YES' : 'NO');
+
+                        if (!vaultKey) {
+                            return res.status(400).json({ error: 'Vault key required to decrypt' });
+                        }
+
+                        // Stream Decryption
+                        if (!fs.existsSync(file.path)) {
+                            return res.status(404).json({ error: 'File not found on disk' });
+                        }
+
+                        try {
+                            const keyBuffer = Buffer.from(vaultKey, 'hex');
+                            // We used AES-256-CTR. IV is usually prepended.
+                            // But wait, TransferService implementation pending.
+                            // Let's assume TransferService prepends 16 byte IV.
+
+                            // Robust IV read and Stream
+                            fs.open(file.path, 'r', (err, fd) => {
+                                if (err) return res.status(500).json({ error: 'Failed to open file' });
+
+                                const ivBuffer = Buffer.alloc(16);
+                                fs.read(fd, ivBuffer, 0, 16, 0, (err, bytesRead, buffer) => {
+                                    fs.close(fd, () => { }); // Close handle
+
+                                    if (err || bytesRead !== 16) {
+                                        return res.status(500).json({ error: 'Failed to read IV or file too short' });
+                                    }
+
+                                    const decipher = crypto.createDecipheriv('aes-256-ctr', keyBuffer, buffer);
+
+                                    // Set Headers
+                                    res.setHeader('Content-Disposition', `inline; filename="${file.name}"`);
+
+                                    // Determine Mime Type (reuse logic from existing download or look up)
+                                    // We need to set Content-Type for images to render in browser
+                                    const mime = require('mime-types');
+                                    const contentType = mime.lookup(file.name) || 'application/octet-stream';
+                                    res.setHeader('Content-Type', contentType);
+
+                                    const readStream = fs.createReadStream(file.path, { start: 16 });
+
+                                    readStream.on('error', (e) => {
+                                        console.error('Stream error', e);
+                                        if (!res.headersSent) res.status(500).end();
+                                    });
+
+                                    readStream.pipe(decipher).pipe(res);
+                                });
+                            });
+                            return; // Stop execution here
+                        } catch (e) {
+                            console.error('Decryption Setup Error', e);
+                            return res.status(500).json({ error: 'Decryption failed' });
+                        }
+                        // Actually, let's use the standard flow below but wrap the stream.
+                        // But we need to handle "inline" vs "attachment" and mime types.
+                        // Let's modify the proceedDownload function.
+
+                        return; // Handled by decryption stream
                     }
 
                     const proceedDownload = () => {
@@ -415,10 +526,7 @@ class FileController {
 
         FileModel.findById(id, (err, file) => {
             if (err) return res.status(500).json({ error: err.message });
-            if (!file) return res.status(404).json({ error: 'File not found' }); // Might need to check trashed items specifically if findById filters them out? 
-            // findById usually filters out deleted items if we updated it? 
-            // Wait, I updated findByPath and others, but did I update findById?
-            // Let's check FileModel. findById: `SELECT * FROM files WHERE id = ?`. It does NOT filter. Good.
+            if (!file) return res.status(404).json({ error: 'File not found' });
 
             if (file.user_id !== userId) return res.status(403).json({ error: 'Access denied' });
 
@@ -445,6 +553,16 @@ class FileController {
                     res.json({ message: 'Permanently deleted' });
                 });
             });
+        });
+    }
+
+    // Empty Trash
+    static emptyTrash(req, res) {
+        const userId = req.user.id;
+
+        FileModel.emptyTrash(userId, (err, result) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ message: 'Trash emptied', details: result });
         });
     }
 

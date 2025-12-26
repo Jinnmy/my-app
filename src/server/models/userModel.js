@@ -11,6 +11,8 @@ const initUserTable = () => {
             role TEXT DEFAULT 'user',
             storage_limit INTEGER DEFAULT 10737418240, -- 10GB default
             used_storage INTEGER DEFAULT 0,
+            used_storage INTEGER DEFAULT 0,
+            preferences TEXT DEFAULT '{}',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     `;
@@ -37,6 +39,26 @@ const initUserTable = () => {
             db.run(migrationUsed, (err) => {
                 if (!err) console.log('Added used_storage column.');
             });
+
+            // Migration: Add vault columns
+            const migrationVaultEnabled = `ALTER TABLE users ADD COLUMN vault_enabled INTEGER DEFAULT 0`;
+            db.run(migrationVaultEnabled, (err) => {
+                if (!err) console.log('Added vault_enabled column.');
+            });
+            const migrationVaultPass = `ALTER TABLE users ADD COLUMN vault_password_hash TEXT`;
+            db.run(migrationVaultPass, (err) => {
+                if (!err) console.log('Added vault_password_hash column.');
+            });
+            const migrationVaultSalt = `ALTER TABLE users ADD COLUMN vault_salt TEXT`;
+            db.run(migrationVaultSalt, (err) => {
+                if (!err) console.log('Added vault_salt column.');
+            });
+
+            // Migration: Add preferences column
+            const migrationPreferences = `ALTER TABLE users ADD COLUMN preferences TEXT DEFAULT '{}'`;
+            db.run(migrationPreferences, (err) => {
+                if (!err) console.log('Added preferences column.');
+            });
         }
     });
 };
@@ -47,30 +69,41 @@ class UserModel {
     static create(user, callback) {
         const { username, email, password, role } = user;
         const userRole = role || 'user';
-        const sql = `INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)`;
+        const sql = `INSERT INTO users (username, email, password, role, preferences) VALUES (?, ?, ?, ?, '{}')`;
         db.run(sql, [username, email, password, userRole], function (err) {
-            callback(err, { id: this.lastID, ...user, role: userRole });
+            callback(err, { id: this.lastID, ...user, role: userRole, preferences: {} });
         });
+    }
+
+    static _parseUser(row) {
+        if (!row) return row;
+        try {
+            row.preferences = row.preferences ? JSON.parse(row.preferences) : {};
+        } catch (e) {
+            row.preferences = {};
+        }
+        return row;
     }
 
     static findByEmail(email, callback) {
         const sql = `SELECT * FROM users WHERE email = ?`;
         db.get(sql, [email], (err, row) => {
-            callback(err, row);
+            callback(err, UserModel._parseUser(row));
         });
     }
 
     static findById(id, callback) {
         const sql = `SELECT * FROM users WHERE id = ?`;
         db.get(sql, [id], (err, row) => {
-            callback(err, row);
+            callback(err, UserModel._parseUser(row));
         });
     }
 
     static findAll(callback) {
         const sql = `SELECT * FROM users`;
         db.all(sql, [], (err, rows) => {
-            callback(err, rows);
+            const parsedRows = rows ? rows.map(r => UserModel._parseUser(r)) : [];
+            callback(err, parsedRows);
         });
     }
 
@@ -134,6 +167,28 @@ class UserModel {
         const sql = `SELECT SUM(storage_limit) as total FROM users`;
         db.get(sql, [], (err, row) => {
             callback(err, row ? row.total : 0);
+        });
+    }
+
+    // Vault Methods
+    static updateVaultSettings(userId, enabled, hash, salt, callback) {
+        const sql = `UPDATE users SET vault_enabled = ?, vault_password_hash = ?, vault_salt = ? WHERE id = ?`;
+        db.run(sql, [enabled, hash, salt, userId], function (err) {
+            callback(err);
+        });
+    }
+
+    static getVaultSettings(userId, callback) {
+        const sql = `SELECT vault_enabled, vault_password_hash, vault_salt FROM users WHERE id = ?`;
+        db.get(sql, [userId], (err, row) => {
+            callback(err, row);
+        });
+    }
+
+    static updatePreferences(userId, preferences, callback) {
+        const sql = `UPDATE users SET preferences = ? WHERE id = ?`;
+        db.run(sql, [JSON.stringify(preferences), userId], function (err) {
+            callback(err);
         });
     }
 }

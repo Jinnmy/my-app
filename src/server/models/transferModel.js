@@ -114,7 +114,7 @@ class TransferModel {
     static resetProcessing(callback) {
         const sql = `UPDATE transfers SET status = 'pending' WHERE status = 'processing'`;
         db.run(sql, [], function (err) {
-            callback(err, this.changes);
+            callback(err, (this && this.changes) ? this.changes : 0);
         });
     }
     static findLastBackup(userId, callback) {

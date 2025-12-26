@@ -26,6 +26,9 @@ async function initDashboard() {
         logoutBtn.addEventListener('click', handleLogout);
     }
 
+    // Profile Dropdown Logic
+    setupProfileDropdown();
+
     // Fetch fresh user data (including storage)
     await updateUserData();
 
@@ -119,6 +122,20 @@ function updateUserDisplay(user) {
     // Check if we are on dashboard home by looking for a unique element
     if (document.getElementById('mainStorageTotal')) {
         fetchSystemData();
+    }
+
+    // Update Dropdown Info
+    const ddName = document.getElementById('dropdownUserName');
+    const ddEmail = document.getElementById('dropdownUserEmail');
+    if (ddName) ddName.textContent = user.username || 'User';
+    if (ddEmail) ddEmail.textContent = user.email || '';
+
+    // Init Vault Toggle state
+    const ddVaultToggle = document.getElementById('dropdownVaultToggle');
+    if (ddVaultToggle) {
+        const prefs = user.preferences || {};
+        // checked if NOT hidden
+        ddVaultToggle.checked = !prefs.hideVault;
     }
 }
 
@@ -256,6 +273,8 @@ async function loadPage(pageName) {
             if (window.initTrashPage) await window.initTrashPage();
         } else if (pageName === 'allocations') {
             if (window.initAllocationsPage) await window.initAllocationsPage();
+        } else if (pageName === 'vault') {
+            if (window.initVaultPage) await window.initVaultPage();
         }
 
         // Update active state in sidebar
@@ -296,6 +315,15 @@ function updateActiveNavLink(pageName) {
                     item.style.display = 'flex';
                 } else {
                     item.style.display = 'none';
+                }
+            } else if (item.dataset.page === 'vault') {
+                // Check preferences
+                const preferences = user.preferences || {};
+                // If hideVault is true, hide it. Default is show (so if hideVault is undefined/false, show)
+                if (preferences.hideVault) {
+                    item.style.display = 'none';
+                } else {
+                    item.style.display = 'flex';
                 }
             } else {
                 item.style.display = 'flex'; // Ensure visible
@@ -505,5 +533,80 @@ function setupSidebarToggle() {
                 }
             });
         });
+    }
+}
+
+function setupProfileDropdown() {
+    const profileSection = document.getElementById('userProfileSection');
+    const dropdown = document.getElementById('profileDropdown');
+    const settingsBtn = document.getElementById('dropdownSettingsBtn');
+    const vaultToggle = document.getElementById('dropdownVaultToggle');
+
+    if (profileSection && dropdown) {
+        // Toggle Dropdown
+        profileSection.addEventListener('click', (e) => {
+            // Prevent closing if clicking inside dropdown (except specific actions)
+            if (e.target.closest('#profileDropdown')) return;
+
+            dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Close when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!profileSection.contains(e.target) && dropdown.style.display === 'block') {
+                dropdown.style.display = 'none';
+            }
+        });
+
+        // Settings Button
+        if (settingsBtn) {
+            settingsBtn.addEventListener('click', () => {
+                dropdown.style.display = 'none';
+                loadPage('settings');
+            });
+        }
+
+        // Vault Toggle Logic
+        if (vaultToggle) {
+            vaultToggle.addEventListener('change', async (e) => {
+                const showVault = e.target.checked;
+                const hideVault = !showVault;
+                const token = localStorage.getItem('token');
+
+                try {
+                    const response = await fetch('/api/users/preferences', {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ hideVault })
+                    });
+
+                    if (response.ok) {
+                        // Update local user
+                        const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+                        currentUser.preferences = currentUser.preferences || {};
+                        currentUser.preferences.hideVault = hideVault;
+                        localStorage.setItem('user', JSON.stringify(currentUser));
+
+                        // Refresh Sidebar immediately
+                        // Re-run checking logic on sidebar items
+                        updateActiveNavLink(window.currentPage || 'dashboard-home');
+
+                        // Force toggle display of vault item (updateActiveNavLink handles it now, let's verify)
+                        // updateActiveNavLink does check prefs.hideVault.
+                        // So calling it should suffice.
+
+                    } else {
+                        throw new Error('Failed to update preference');
+                    }
+                } catch (error) {
+                    console.error(error);
+                    e.target.checked = !showVault; // revert
+                    alert('Failed to save preference');
+                }
+            });
+        }
     }
 }

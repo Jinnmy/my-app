@@ -11,6 +11,7 @@ router.post('/', userController.createUser); // Public registration (optional, o
 
 // Protected (Any Authenticated User)
 router.get('/me', verifyToken, userController.getMe);
+router.put('/preferences', verifyToken, userController.updatePreferences);
 router.get('/:id', verifyToken, userController.getUserById);
 
 // Admin Only

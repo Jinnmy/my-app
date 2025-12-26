@@ -103,17 +103,24 @@ const initFileTable = () => {
         if (err) console.error('Error creating share_links table:', err.message);
         else console.log('Share links table ready.');
     });
+
+    // Migration: Add is_encrypted column
+    const encryptedSql = `ALTER TABLE files ADD COLUMN is_encrypted INTEGER DEFAULT 0`;
+    db.run(encryptedSql, (err) => {
+        if (!err) console.log('Added is_encrypted column to files table.');
+    });
 };
 
 initFileTable();
 
 class FileModel {
     static create(file, callback) {
-        const { name, path: filePath, type, size, parent_id, user_id, caption, tags } = file;
-        const sql = `INSERT INTO files (name, path, type, size, parent_id, user_id, caption, tags, last_accessed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
+        const { name, path: filePath, type, size, parent_id, user_id, caption, tags, is_encrypted } = file;
+        const sql = `INSERT INTO files (name, path, type, size, parent_id, user_id, caption, tags, is_encrypted, last_accessed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
         const tagsStr = tags ? JSON.stringify(tags) : null;
+        const encryptedVal = is_encrypted ? 1 : 0;
 
-        db.run(sql, [name, filePath, type, size, parent_id, user_id, caption, tagsStr], function (err) {
+        db.run(sql, [name, filePath, type, size, parent_id, user_id, caption, tagsStr, encryptedVal], function (err) {
             callback(err, { id: this.lastID, ...file });
         });
     }
@@ -150,11 +157,11 @@ class FileModel {
             db.get(checkShare, [parentId, userId], (err, row) => {
                 if (row) {
                     // Parent is shared, so list its children
-                    sql = `SELECT * FROM files WHERE parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL) ORDER BY type DESC, name ASC LIMIT ? OFFSET ?`;
+                    sql = `SELECT * FROM files WHERE parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL) AND is_encrypted = 0 ORDER BY type DESC, name ASC LIMIT ? OFFSET ?`;
                     db.all(sql, [parentId, limit, offset], (err, rows) => callback(err, rows));
                 } else {
                     // Parent not shared explicitly, check ownership.
-                    sql = `SELECT * FROM files WHERE user_id = ? AND parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL) ORDER BY type DESC, name ASC LIMIT ? OFFSET ?`;
+                    sql = `SELECT * FROM files WHERE user_id = ? AND parent_id = ? AND (is_deleted = 0 OR is_deleted IS NULL) AND is_encrypted = 0 ORDER BY type DESC, name ASC LIMIT ? OFFSET ?`;
                     db.all(sql, [userId, parentId, limit, offset], (err, rows) => callback(err, rows));
                 }
             });
@@ -164,13 +171,13 @@ class FileModel {
             sql = `
                 SELECT * FROM (
                     SELECT f.*, 'owner' as role FROM files f 
-                    WHERE f.user_id = ? AND f.parent_id IS NULL AND (f.is_deleted = 0 OR f.is_deleted IS NULL)
+                    WHERE f.user_id = ? AND f.parent_id IS NULL AND (f.is_deleted = 0 OR f.is_deleted IS NULL) AND f.is_encrypted = 0
                     
                     UNION
                     
                     SELECT f.*, sf.permission as role FROM files f
                     JOIN shared_files sf ON f.id = sf.file_id
-                    WHERE sf.user_id = ? AND (f.is_deleted = 0 OR f.is_deleted IS NULL)
+                    WHERE sf.user_id = ? AND (f.is_deleted = 0 OR f.is_deleted IS NULL) AND f.is_encrypted = 0
                 ) ORDER BY type DESC, name ASC LIMIT ? OFFSET ?
             `;
             params = [userId, userId, limit, offset];
@@ -223,8 +230,21 @@ class FileModel {
     }
 
     static findAll(callback) {
-        const sql = `SELECT * FROM files`;
+        const sql = `SELECT * FROM files WHERE is_encrypted = 0`;
         db.all(sql, [], (err, rows) => {
+            callback(err, rows);
+        });
+    }
+
+    // Vault Specific
+    static findEncrypted(userId, limit, offset, callback) {
+        const sql = `
+            SELECT * FROM files 
+            WHERE user_id = ? AND is_encrypted = 1 AND (is_deleted = 0 OR is_deleted IS NULL)
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        `;
+        db.all(sql, [userId, limit, offset], (err, rows) => {
             callback(err, rows);
         });
     }
@@ -342,6 +362,81 @@ class FileModel {
         });
     }
 
+    static emptyTrash(userId, callback) {
+        // 1. Get all trashed files to delete from disk
+        const sqlGet = `SELECT * FROM files WHERE user_id = ? AND is_deleted = 1`;
+        db.all(sqlGet, [userId], (err, files) => {
+            if (err) return callback(err);
+
+            // 2. Delete from disk (best effort)
+            const fs = require('fs');
+            let deleteErrors = [];
+
+            files.forEach(file => {
+                try {
+                    if (fs.existsSync(file.path)) {
+                        fs.rmSync(file.path, { recursive: true, force: true });
+                    }
+                } catch (e) {
+                    console.error(`Failed to delete file from disk: ${file.path}`, e);
+                    deleteErrors.push(e.message);
+                }
+            });
+
+            // 3. Delete from DB
+            const sqlDelete = `DELETE FROM files WHERE user_id = ? AND is_deleted = 1`;
+            db.run(sqlDelete, [userId], function (err) {
+                if (err) return callback(err);
+
+                // Update storage usage
+                const UserModel = require('../models/userModel');
+                // Calculate total size freed
+                const totalSize = files.reduce((acc, file) => acc + (file.size || 0), 0);
+
+                if (totalSize > 0) {
+                    UserModel.updateStorage(userId, -totalSize, (err) => {
+                        if (err) console.error('Failed to update storage after emptying trash:', err);
+                    });
+                }
+
+                callback(null, { deletedCount: this.changes, errors: deleteErrors });
+            });
+        });
+    }
+
+    static deleteAllByUserId(userId, callback) {
+        // 1. Get all files to delete from disk
+        const sqlGet = `SELECT * FROM files WHERE user_id = ?`;
+        db.all(sqlGet, [userId], (err, files) => {
+            if (err) return callback(err);
+
+            // 2. Delete from disk (best effort)
+            const fs = require('fs');
+
+            files.forEach(file => {
+                try {
+                    if (fs.existsSync(file.path)) {
+                        fs.rmSync(file.path, { recursive: true, force: true });
+                    }
+                } catch (e) {
+                    console.error(`Failed to delete file from disk during user deletion: ${file.path}`, e);
+                }
+            });
+
+            // 3. Delete from DB
+            const sqlDelete = `DELETE FROM files WHERE user_id = ?`;
+            db.run(sqlDelete, [userId], function (err) {
+                if (err) return callback(err);
+
+                // Also clean up shared files where this user is the recipient
+                const sqlDeleteShares = `DELETE FROM shared_files WHERE user_id = ?`;
+                db.run(sqlDeleteShares, [userId], (err) => {
+                    callback(err, { deletedCount: this.changes });
+                });
+            });
+        });
+    }
+
     static deleteOldTrash(days, callback) {
         const sql = `DELETE FROM files WHERE is_deleted = 1 AND trashed_at < datetime('now', '-' || ? || ' days')`;
         db.run(sql, [days], function (err) {
@@ -432,7 +527,7 @@ class FileModel {
 
         const sql = `
             SELECT * FROM files 
-            WHERE user_id = ? AND last_accessed_at IS NOT NULL AND (is_deleted = 0 OR is_deleted IS NULL)
+            WHERE user_id = ? AND last_accessed_at IS NOT NULL AND (is_deleted = 0 OR is_deleted IS NULL) AND is_encrypted = 0
             ORDER BY last_accessed_at DESC 
             LIMIT ?
         `;

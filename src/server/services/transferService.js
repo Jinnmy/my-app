@@ -3,6 +3,7 @@ const path = require('path');
 const TransferModel = require('../models/transferModel');
 const FileModel = require('../models/fileModel');
 const UserModel = require('../models/userModel');
+const crypto = require('crypto');
 
 const CONCURRENCY_LIMIT = 2; // Simultaneous transfers
 
@@ -91,60 +92,93 @@ class TransferService {
             fs.mkdirSync(destDir, { recursive: true });
         }
 
-        // Check collision (overwrite or rename? For now, we fail if exists, or maybe rename logic was supposed to happen before queue?)
-        // In the controller, we will probably determining the unique path. 
-        // But if it takes time, maybe someone else took it. 
-        // Let's assume the destination path is what we want.
+        const finalizeUpload = (finalPath, captionData = {}) => {
+            FileModel.create({
+                name: metadata.originalname,
+                path: finalPath,
+                type: 'file',
+                size: metadata.size,
+                parent_id: metadata.parentId,
+                user_id: user_id,
+                caption: captionData.caption || null,
+                tags: captionData.tags || [],
+                is_encrypted: metadata.isEncrypted ? 1 : 0
+            }, (err, newFile) => {
+                if (err) {
+                    return TransferModel.updateStatus(id, 'failed', 'File saved but DB update failed: ' + err.message);
+                }
 
-        // Move file (Copy then Delete to handle cross-device EXDEV errors)
-        fs.copyFile(source, destination, (err) => {
-            if (err) {
-                console.error(`Error copying file for transfer ${id}:`, err);
-                return TransferModel.updateStatus(id, 'failed', err.message);
-            }
+                // Update User Storage
+                UserModel.updateStorage(user_id, metadata.size, (err) => {
+                    if (err) console.error('Failed to update storage usage on upload:', err);
+                });
 
-            // Copy successful, now delete source
-            fs.unlink(source, (unlinkErr) => {
-                if (unlinkErr) console.warn(`Failed to delete temp file ${source}:`, unlinkErr);
-            });
-
-            // Record in DB
-            const finalizeUpload = (captionData = {}) => {
-                FileModel.create({
-                    name: metadata.originalname,
-                    path: destination,
-                    type: 'file',
-                    size: metadata.size,
-                    parent_id: metadata.parentId,
-                    user_id: user_id,
-                    caption: captionData.caption || null,
-                    tags: captionData.tags || []
-                }, (err, newFile) => {
-                    if (err) {
-                        return TransferModel.updateStatus(id, 'failed', 'File saved but DB update failed: ' + err.message);
-                    }
-
-                    // Update User Storage
-                    UserModel.updateStorage(user_id, metadata.size, (err) => {
-                        if (err) console.error('Failed to update storage usage on upload:', err);
-                    });
-
-                    // Queue for background processing (Captioning / Summarization)
+                // Queue for background processing (Captioning / Summarization) - ONLY IF NOT ENCRYPTED
+                if (!metadata.isEncrypted) {
                     const CaptionQueue = require('../services/captionQueue');
-
-                    // We can just add it to the queue; the queue handles type checks internally now
                     CaptionQueue.add({
                         id: newFile.id,
-                        path: destination,
+                        path: finalPath,
                         name: metadata.originalname
                     });
+                }
 
-                    TransferModel.updateStatus(id, 'completed');
+                TransferModel.updateStatus(id, 'completed');
+            });
+        };
+
+        if (metadata.isEncrypted) {
+            // ENCRYPTION FLOW
+            if (!metadata.vaultKey) {
+                return TransferModel.updateStatus(id, 'failed', 'Missing vault key for encrypted transfer');
+            }
+
+            try {
+                const key = Buffer.from(metadata.vaultKey, 'hex');
+                const iv = crypto.randomBytes(16);
+                const cipher = crypto.createCipheriv('aes-256-ctr', key, iv);
+
+                const input = fs.createReadStream(source);
+                const output = fs.createWriteStream(destination);
+
+                // Write IV first
+                output.write(iv);
+
+                input.pipe(cipher).pipe(output);
+
+                output.on('finish', () => {
+                    // Cleanup
+                    fs.unlink(source, () => { });
+                    finalizeUpload(destination);
                 });
-            };
 
-            finalizeUpload();
-        });
+                output.on('error', (err) => {
+                    console.error('Encryption write error:', err);
+                    TransferModel.updateStatus(id, 'failed', 'Encryption failed');
+                });
+
+            } catch (e) {
+                console.error('Encryption error:', e);
+                return TransferModel.updateStatus(id, 'failed', 'Encryption setup failed');
+            }
+
+        } else {
+            // STANDARD FLOW
+            // Move file (Copy then Delete to handle cross-device EXDEV errors)
+            fs.copyFile(source, destination, (err) => {
+                if (err) {
+                    console.error(`Error copying file for transfer ${id}:`, err);
+                    return TransferModel.updateStatus(id, 'failed', err.message);
+                }
+
+                // Copy successful, now delete source
+                fs.unlink(source, (unlinkErr) => {
+                    if (unlinkErr) console.warn(`Failed to delete temp file ${source}:`, unlinkErr);
+                });
+
+                finalizeUpload(destination);
+            });
+        }
     }
 
     handleDownload(transfer) {

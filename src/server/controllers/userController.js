@@ -1,4 +1,5 @@
 const UserModel = require('../models/userModel');
+const FileModel = require('../models/fileModel');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
@@ -63,7 +64,8 @@ const userController = {
                     email: user.email,
                     role: user.role,
                     storage_limit: user.storage_limit || 10737418240,
-                    used_storage: user.used_storage || 0
+                    used_storage: user.used_storage || 0,
+                    preferences: user.preferences || {}
                 }
             });
         });
@@ -104,7 +106,8 @@ const userController = {
                 email: user.email,
                 role: user.role,
                 storage_limit: user.storage_limit || 10737418240,
-                used_storage: user.used_storage || 0
+                used_storage: user.used_storage || 0,
+                preferences: user.preferences || {}
             });
         });
     },
@@ -139,10 +142,46 @@ const userController = {
         // Optional: Prevent deleting self
         // if (req.user.id == id) return res.status(400).json({ error: "Cannot delete yourself" });
 
-        UserModel.delete(id, (err, changes) => {
-            if (err) return res.status(500).json({ error: err.message });
-            if (changes === 0) return res.status(404).json({ error: 'User not found' });
-            res.json({ message: 'User deleted successfully' });
+        // First delete all user files
+        FileModel.deleteAllByUserId(id, (err, fileResult) => {
+            if (err) {
+                console.error("Error deleting user files:", err);
+                // Proceed to delete user anyway? Or fail?
+                // Failing is safer to avoid partial state, but maybe we want to force delete user.
+                // Let's return error.
+                return res.status(500).json({ error: "Failed to delete user files: " + err.message });
+            }
+
+            UserModel.delete(id, (err, changes) => {
+                if (err) return res.status(500).json({ error: err.message });
+                if (changes === 0) return res.status(404).json({ error: 'User not found' });
+                res.json({ message: 'User and their files deleted successfully' });
+            });
+        });
+    },
+
+    updatePreferences: (req, res) => {
+        const id = req.user.id;
+        const preferences = req.body;
+
+        if (!preferences || typeof preferences !== 'object') {
+            return res.status(400).json({ error: 'Invalid preferences format' });
+        }
+
+        // Fetch current user to merge preferences (optional, but good practice to not overwrite all if partial)
+        // For now, let's assume the frontend sends the full or merged object, OR we merge here.
+        // Let's doing a simple merge here.
+        UserModel.findById(id, (err, user) => {
+            if (err) return res.status(500).json({ error: 'Server error' });
+            if (!user) return res.status(404).json({ error: 'User not found' });
+
+            const currentPrefs = user.preferences || {};
+            const newPrefs = { ...currentPrefs, ...preferences };
+
+            UserModel.updatePreferences(id, newPrefs, (err) => {
+                if (err) return res.status(500).json({ error: 'Failed to update preferences' });
+                res.json({ message: 'Preferences updated', preferences: newPrefs });
+            });
         });
     }
 };
