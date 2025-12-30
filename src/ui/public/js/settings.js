@@ -6,7 +6,7 @@ async function initSettingsPage() {
     try {
         const user = JSON.parse(localStorage.getItem('user') || '{}');
         if (user.role !== 'admin') {
-            const sectionsToHide = ['settings-app-defaults', 'settings-ai-features', 'settings-danger-zone'];
+            const sectionsToHide = ['settings-app-defaults', 'settings-ai-features', 'settings-remote-access', 'settings-danger-zone'];
             sectionsToHide.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.style.display = 'none';
@@ -418,6 +418,80 @@ async function initSettingsPage() {
             alert('To change your password, please disable and re-enable the vault (Note: This will clear current files). Password rotation without data loss is not yet supported.');
         };
     }
+
+    // --- Tailscale Settings Logic ---
+    const tsStatusText = document.getElementById('tsSettingsStatusText');
+    const tsBadge = document.getElementById('tsSettingsBadge');
+    const tsUrlSection = document.getElementById('tsSettingsRemoteUrl');
+    const tsUrlValue = document.getElementById('tsSettingsUrlValue');
+    const tsRefreshBtn = document.getElementById('tsRefreshBtn');
+
+    const checkTailscaleSettings = async () => {
+        if (!tsStatusText) return;
+
+        tsStatusText.textContent = 'Checking...';
+        tsBadge.textContent = 'Checking';
+        tsBadge.style.background = '#333';
+        tsBadge.style.color = '#888';
+
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('/api/system/status', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                if (data.installed) {
+                    if (data.status === 'running') {
+                        let statusMsg = 'Tailscale is running.';
+                        if (data.serveActive) {
+                            statusMsg += ' Secure Remote Access (Serve/Funnel) is ACTIVE.';
+                            tsBadge.textContent = 'Active + Serve';
+                            tsBadge.style.background = 'rgba(16, 185, 129, 0.2)';
+                            tsBadge.style.color = '#10b981';
+                        } else {
+                            statusMsg += ' However, Remote Access (Serve) is not yet active.';
+                            tsBadge.textContent = 'Active (Local Only)';
+                            tsBadge.style.background = 'rgba(59, 130, 246, 0.2)';
+                            tsBadge.style.color = '#3b82f6';
+                        }
+                        tsStatusText.textContent = statusMsg;
+
+                        if (data.tailscaleUrl) {
+                            tsUrlSection.style.display = 'block';
+                            tsUrlValue.textContent = data.tailscaleUrl;
+                        } else {
+                            tsUrlSection.style.display = 'none';
+                        }
+                    } else {
+                        tsStatusText.textContent = 'Tailscale is installed but inactive.';
+                        tsBadge.textContent = 'Inactive';
+                        tsBadge.style.background = 'rgba(245, 158, 11, 0.2)';
+                        tsBadge.style.color = '#f59e0b';
+                        tsUrlSection.style.display = 'none';
+                    }
+                } else {
+                    tsStatusText.textContent = 'Tailscale was not detected on this system.';
+                    tsBadge.textContent = 'Not Found';
+                    tsBadge.style.background = 'rgba(239, 68, 68, 0.2)';
+                    tsBadge.style.color = '#ef4444';
+                    tsUrlSection.style.display = 'none';
+                }
+            }
+        } catch (e) {
+            console.error('Tailscale check failed', e);
+            tsStatusText.textContent = 'Failed to retrieve status.';
+        }
+    };
+
+    if (tsRefreshBtn) {
+        tsRefreshBtn.onclick = checkTailscaleSettings;
+    }
+
+    // Initial check
+    checkTailscaleSettings();
+
 
 }
 

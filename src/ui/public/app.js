@@ -74,6 +74,64 @@ function updateUserDisplay(user) {
     if (nameDisplay) nameDisplay.textContent = user.username || user.email;
     if (avatarDisplay) avatarDisplay.textContent = (user.username || user.email).charAt(0).toUpperCase();
 
+    // Show Port/Tailscale for Admins
+    const portDisplay = document.getElementById('adminPortDisplay');
+    const portValue = document.getElementById('adminPortValue');
+    if (portDisplay && portValue) {
+        if (user.role === 'admin') {
+            portDisplay.style.display = 'flex';
+
+            // Try to fetch Tailscale URL
+            fetch('/api/system/status', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+                .then(res => res.json())
+                .then(status => {
+                    if (status.tailscaleUrl) {
+                        const host = status.tailscaleUrl.replace('https://', '');
+                        portValue.textContent = host;
+                        portDisplay.title = `Remote Access: ${status.tailscaleUrl}`;
+                        portDisplay.onclick = (e) => {
+                            e.preventDefault();
+                            const url = status.tailscaleUrl;
+                            if (window.electronAPI && window.electronAPI.openExternal) {
+                                window.electronAPI.openExternal(url);
+                            } else {
+                                window.open(url, '_blank');
+                            }
+                        };
+                    } else {
+                        const port = window.location.port || '3000';
+                        portValue.textContent = `Local Port: ${port}`;
+                        portDisplay.onclick = (e) => {
+                            e.preventDefault();
+                            const url = `http://localhost:${port}`;
+                            if (window.electronAPI && window.electronAPI.openExternal) {
+                                window.electronAPI.openExternal(url);
+                            } else {
+                                window.open(url, '_blank');
+                            }
+                        };
+                    }
+                })
+                .catch(() => {
+                    const port = window.location.port || '3000';
+                    portValue.textContent = `Local Port: ${port}`;
+                    portDisplay.onclick = (e) => {
+                        e.preventDefault();
+                        const url = `http://localhost:${port}`;
+                        if (window.electronAPI && window.electronAPI.openExternal) {
+                            window.electronAPI.openExternal(url);
+                        } else {
+                            window.open(url, '_blank');
+                        }
+                    };
+                });
+        } else {
+            portDisplay.style.display = 'none';
+        }
+    }
+
     // --- Dashboard Widgets Logic ---
     // User Stats (Doughnut)
     const gaugeCircle = document.getElementById('userStorageChart');
@@ -302,8 +360,8 @@ function updateActiveNavLink(pageName) {
     const user = JSON.parse(localStorage.getItem('user') || '{}');
 
     navItems.forEach(item => {
-        // Hide Users and Settings link if not admin
-        if ((item.dataset.page === 'users' || item.dataset.page === 'settings') && user.role !== 'admin') {
+        // Hide Users link if not admin
+        if (item.dataset.page === 'users' && user.role !== 'admin') {
             item.style.display = 'none';
         } else {
             // New check: Hide Files and Trash link if in Electron

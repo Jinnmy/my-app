@@ -24,6 +24,7 @@ const settingsRoutes = require('./routes/settingsRoutes');
 const backupRoutes = require('./routes/backupRoutes');
 const vaultRoutes = require('./routes/vaultRoutes');
 const TransferService = require('./services/transferService');
+const TailscaleService = require('./services/tailscaleService');
 
 require('./socket')(io);
 
@@ -77,8 +78,42 @@ function startServer(electronAppInstance) {
         });
     }, 24 * 60 * 60 * 1000);
 
-    server.listen(port, () => {
-        console.log(`NAS Server running at http://localhost:${port}`);
+    return new Promise((resolve, reject) => {
+        let currentPort = 3000;
+
+        const maxPort = currentPort + 10;
+
+        const attemptListen = (p) => {
+            if (p > maxPort) {
+                reject(new Error(`Could not find an available port between ${currentPort} and ${maxPort}`));
+                return;
+            }
+
+            const s = server.listen(p, async () => {
+                console.log(`NAS Server running at http://localhost:${p}`);
+
+                // Initialize Tailscale Serve
+                try {
+                    await TailscaleService.startServe(p);
+                } catch (tsError) {
+                    console.warn('Tailscale Serve failed to initialize:', tsError.message);
+                }
+
+                resolve(p);
+            });
+
+            s.on('error', (err) => {
+                if (err.code === 'EADDRINUSE') {
+                    console.log(`Port ${p} is busy, trying ${p + 1}...`);
+                    s.close();
+                    attemptListen(p + 1);
+                } else {
+                    reject(err);
+                }
+            });
+        };
+
+        attemptListen(currentPort);
     });
 }
 

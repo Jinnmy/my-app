@@ -17,19 +17,25 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this'; // S
 
 // Helper to get root storage path
 const getStoragePath = () => {
+    const { getElectronApp } = require('./systemController');
+    const app = getElectronApp ? getElectronApp() : null;
+
     let configPath = path.join(__dirname, '../config/storage.json');
 
-    // Check if running in Electron (packaged or dev with electron wrapper initialized)
-    // Checking process.versions.electron is a standard way
-    if (process.versions.electron && require('electron').app) {
+    if (app && app.isPackaged) {
         try {
-            configPath = path.join(require('electron').app.getPath('userData'), 'storage.json');
-        } catch (e) { /* might fail if app not ready, but unlikely here */ }
+            configPath = path.join(app.getPath('userData'), 'storage.json');
+        } catch (e) { /* ignore */ }
     }
 
     if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        return config.volumePath || null;
+        try {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            return config.volumePath || null;
+        } catch (e) {
+            console.error('Failed to parse storage.json:', e);
+            return null;
+        }
     }
     return null;
 };

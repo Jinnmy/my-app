@@ -11,6 +11,8 @@ const setElectronApp = (app) => {
     electronApp = app;
 };
 
+const getElectronApp = () => electronApp;
+
 const runPowerShell = (command, asAdmin = false) => {
     return new Promise((resolve, reject) => {
         const tempFilePath = path.join(os.tmpdir(), `ps_script_${Date.now()}_${Math.random().toString(36).substring(7)}.ps1`);
@@ -520,6 +522,19 @@ const systemController = {
         }
     },
 
+    getSystemStatus: async (req, res) => {
+        const TailscaleService = require('../services/tailscaleService');
+        const status = await TailscaleService.getStatus();
+        const url = await TailscaleService.getTailscaleUrl();
+
+        res.json({
+            installed: status ? status.installed : false,
+            status: status ? (status.Self ? 'running' : 'inactive') : 'not_found',
+            tailscaleUrl: url,
+            serveActive: status ? status.serveActive : false
+        });
+    },
+
     factoryReset: async (req, res) => {
         try {
             console.log("Initiating Factory Reset...");
@@ -612,4 +627,4 @@ const systemController = {
     }
 };
 
-module.exports = { systemController, setElectronApp };
+module.exports = { systemController, setElectronApp, getElectronApp };

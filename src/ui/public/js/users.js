@@ -138,8 +138,8 @@ window.initUsersPage = function () {
                     </div>
                 </td>
                 <td>
-                    <button class="action-btn edit" data-id="${user.id}"><i class="feather-edit-2"></i> Edit</button>
-                    <button class="action-btn delete" data-id="${user.id}"><i class="feather-trash"></i></button>
+                    <button class="action-btn edit" data-id="${user.id}"><i data-feather="edit-2"></i> Edit</button>
+                    <button class="action-btn delete" data-id="${user.id}"><i data-feather="trash"></i></button>
                 </td>
             </tr>
         `).join('');
@@ -151,6 +151,11 @@ window.initUsersPage = function () {
         document.querySelectorAll('.delete').forEach(btn => {
             btn.addEventListener('click', () => deleteUser(btn.dataset.id));
         });
+
+        // Replace Feather icons
+        if (window.feather) {
+            feather.replace();
+        }
     }
 
     // Open Modal (Add)
@@ -186,8 +191,6 @@ window.initUsersPage = function () {
         document.getElementById('password').required = false;
         document.getElementById('password').placeholder = 'Leave blank to keep unchanged';
 
-        document.getElementById('password').placeholder = 'Leave blank to keep unchanged';
-
         setupStorageSlider(user.storage_limit);
 
         // Show delete button and setup listener
@@ -218,7 +221,6 @@ window.initUsersPage = function () {
             const formData = {
                 username: document.getElementById('username').value,
                 email: document.getElementById('email').value,
-                role: document.getElementById('role').value,
                 role: document.getElementById('role').value,
                 // storage_limit comes in as GB from input, convert to bytes
                 storage_limit: (parseInt(document.getElementById('storage_limit').value) || 0) * BYTES_PER_GB,
@@ -282,4 +284,5 @@ window.initUsersPage = function () {
 
     // Initial Load
     fetchUsers();
+    if (window.feather) feather.replace();
 };

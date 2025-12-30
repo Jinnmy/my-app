@@ -100,6 +100,43 @@
         </div>
     </div>
 
+    <div id="settings-remote-access" class="settings-section" style="margin-top: 20px;">
+        <h3>Remote Access (Tailscale)</h3>
+        <p style="color: #aaa; font-size: 13px; margin-bottom: 15px;">
+            Monitor your secure remote access status.
+        </p>
+
+        <div class="setting-item"
+            style="display: flex; flex-direction: column; max-width: 400px; margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+
+            <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                <div>
+                    <strong style="display: block; font-size: 16px;">Tailscale Status</strong>
+                    <div id="tsSettingsStatusText" style="font-size: 13px; color: #aaa; margin-top: 4px;">Checking...
+                    </div>
+                </div>
+                <div id="tsSettingsBadge"
+                    style="padding: 4px 8px; border-radius: 4px; font-size: 12px; background: #333; color: #888;">
+                    Checking
+                </div>
+            </div>
+
+            <div id="tsSettingsRemoteUrl" style="margin-top: 15px; display: none;">
+                <span style="display: block; font-size: 12px; color: #aaa; margin-bottom: 4px;">Remote URL</span>
+                <div id="tsSettingsUrlValue"
+                    style="font-family: monospace; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); padding: 8px; border-radius: 4px; color: #3b82f6; font-size: 13px; word-break: break-all;">
+                    -
+                </div>
+            </div>
+
+            <div style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+                <button id="tsRefreshBtn" class="btn-secondary" style="width: 100%;">
+                    Refresh Status
+                </button>
+            </div>
+        </div>
+    </div>
+
     <div id="settings-danger-zone" class="settings-section" style="margin-top: 20px;">
         <h3 style="color: #ef4444;">Danger Zone</h3>
         <div class="setting-item"

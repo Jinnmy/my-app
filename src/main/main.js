@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell } = require('electron');
 const path = require('node:path');
 
 let tray = null;
@@ -63,6 +63,9 @@ const createTray = () => {
   });
 };
 
+
+let serverPort = 3000; // Default, will be updated by startServer
+
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -114,11 +117,17 @@ const createWindow = () => {
 
   if (fs.existsSync(configPath)) {
     // Setup complete, load the dashboard
-    mainWindow.loadURL('http://localhost:3000/');
+    mainWindow.loadURL(`http://localhost:${serverPort}/`);
   } else {
     // No config found, load the setup wizard
-    mainWindow.loadURL('http://localhost:3000/setup.html');
+    mainWindow.loadURL(`http://localhost:${serverPort}/setup.html`);
   }
+
+  // Force all new windows (links, window.open) to open in the default system browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
 
   // Open the DevTools.
   // mainWindow.webContents.openDevTools();
@@ -127,8 +136,13 @@ const createWindow = () => {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
-  startServer(app); // Start the Express server with Electron app instance
+app.whenReady().then(async () => {
+  try {
+    serverPort = await startServer(app); // Start the Express server with Electron app instance
+  } catch (err) {
+    console.error('Failed to start server:', err);
+  }
+
   createTray();
   createWindow();
 

@@ -194,6 +194,79 @@
                 transform: rotate(360deg);
             }
         }
+
+        .status-box {
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            margin: 1.5rem 0;
+            background: #0f172a;
+            border: 1px solid #334155;
+        }
+
+        .status-box.detected {
+            border-color: #10b981;
+            background: rgba(16, 185, 129, 0.05);
+        }
+
+        .status-box.warning {
+            border-color: #f59e0b;
+            background: rgba(245, 158, 11, 0.05);
+        }
+
+        .status-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            font-weight: 600;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #94a3b8;
+        }
+
+        .status-box.detected .status-dot {
+            background: #10b981;
+            box-shadow: 0 0 10px #10b981;
+        }
+
+        .status-box.warning .status-dot {
+            background: #f59e0b;
+        }
+
+        .tailscale-url {
+            font-family: monospace;
+            background: #1e293b;
+            padding: 0.5rem;
+            border-radius: 0.25rem;
+            display: block;
+            margin-top: 0.5rem;
+            color: var(--primary);
+        }
+
+        .instructions {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .instructions ol {
+            padding-left: 1.25rem;
+            margin-bottom: 0;
+        }
+
+        .link-btn {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .link-btn:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 
@@ -249,9 +322,30 @@
             <button class="btn btn-secondary" onclick="nextStep(2)">Back</button>
         </div>
 
-        <!-- Step 4: Startup Permission -->
+        <!-- Step 4: Tailscale Setup -->
         <div id="step4" class="step">
+            <h2>Remote Access (Tailscale)</h2>
+            <p class="text-muted">Securely access your NAS from anywhere using Tailscale.</p>
+
+            <div id="tailscaleStatus" class="status-box">
+                <div class="status-header">
+                    <div class="status-dot"></div>
+                    <span id="tsStatusText">Checking Tailscale...</span>
+                </div>
+                <div id="tsStatusDetail" class="instructions">
+                    Please wait while we check for Tailscale on your system.
+                </div>
+            </div>
+
+            <button class="btn" onclick="nextStep(5)" id="tsNextBtn">Next</button>
+            <button class="btn btn-secondary" onclick="nextStep(5)" id="tsSkipBtn">Skip / Setup Later</button>
+            <button class="btn btn-secondary" onclick="nextStep(3)" style="margin-top: 0.5rem;">Back</button>
+        </div>
+
+        <!-- Step 5: Startup Permission -->
+        <div id="step5" class="step">
             <h2>Final Setup</h2>
+
             <p>Do you want this NAS application to start automatically when Windows starts?</p>
             <div class="form-group">
                 <label class="disk-card" style="cursor: pointer;">
@@ -260,8 +354,9 @@
                 </label>
             </div>
             <button class="btn" onclick="finishSetup()">Finish Setup</button>
-            <button class="btn btn-secondary" onclick="nextStep(3)">Back</button>
+            <button class="btn btn-secondary" onclick="nextStep(4)">Back</button>
         </div>
+
     </div>
 
     <!-- Loading Overlay -->
@@ -378,10 +473,60 @@
 
                 updateRaidOptions();
             }
+
+            if (step === 4) {
+                checkTailscale();
+            }
+
             document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
             document.getElementById('step' + step).classList.add('active');
             currentStep = step;
         }
+
+        async function checkTailscale() {
+            const statusBox = document.getElementById('tailscaleStatus');
+            const statusText = document.getElementById('tsStatusText');
+            const statusDetail = document.getElementById('tsStatusDetail');
+            const nextBtn = document.getElementById('tsNextBtn');
+
+            statusBox.className = 'status-box';
+            statusText.innerText = 'Checking Tailscale...';
+            statusDetail.innerText = 'Please wait...';
+
+            try {
+                const res = await fetch('/api/system/status');
+                const data = await res.json();
+
+                if (data.installed) {
+                    statusBox.classList.add('detected');
+                    statusText.innerText = 'Tailscale Detected';
+
+                    if (data.tailscaleUrl) {
+                        statusDetail.innerHTML = `
+                            Tailscale is running and configured for remote access.
+                            <span class="tailscale-url">${data.tailscaleUrl}</span>
+                        `;
+                    } else {
+                        statusDetail.innerText = 'Tailscale is installed but may not be logged in or Serve is not yet active. The app will attempt to enable it once setup is complete.';
+                    }
+                } else {
+                    statusBox.classList.add('warning');
+                    statusText.innerText = 'Tailscale Not Detected';
+                    statusDetail.innerHTML = `
+                        Tailscale is recommended for secure remote access without port forwarding.
+                        <ol style="margin-top: 1rem;">
+                            <li>Download and install <a href="https://tailscale.com/download" target="_blank" class="link-btn">Tailscale</a>.</li>
+                            <li>Sign in to your Tailscale account.</li>
+                            <li>Refresh this page or proceed and set it up later.</li>
+                        </ol>
+                    `;
+                }
+            } catch (e) {
+                console.error('Tailscale check failed:', e);
+                statusText.innerText = 'Unable to check Tailscale status';
+            }
+        }
+
 
         async function finishSetup() {
             const username = document.getElementById('username').value;
