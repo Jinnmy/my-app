@@ -5,6 +5,12 @@ module.exports = {
   packagerConfig: {
     asar: true,
     icon: './src/ui/public/assets/logo', // Forge auto-adds .ico for Windows
+    ignore: [
+      /^\/out($|\/)/,        // Ignore the build output folder
+      /\.git/,               // Ignore git history
+      /node_modules\/\.cache/, // Ignore npm caches
+      /Project Files/,       // Ignore your raw NAS project files
+    ],
     extraResource: [
       './resources/blip',
       './resources/python',

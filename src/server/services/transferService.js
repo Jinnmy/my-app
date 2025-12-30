@@ -10,6 +10,8 @@ const CONCURRENCY_LIMIT = 2; // Simultaneous transfers
 class TransferService {
     constructor() {
         this.isProcessing = false;
+        this.intervalId = null;
+        this.isShuttingDown = false;
     }
 
     start() {
@@ -21,13 +23,23 @@ class TransferService {
             else if (changes > 0) console.log(`Reset ${changes} stuck transfers to pending.`);
 
             this.processQueue();
+            this.processQueue();
             // Poll regularly in case of stuck jobs or new ones
-            setInterval(() => this.processQueue(), 5000);
+            this.intervalId = setInterval(() => this.processQueue(), 5000);
         });
     }
 
+    stop() {
+        console.log('Stopping TransferService...');
+        this.isShuttingDown = true;
+        if (this.intervalId) {
+            clearInterval(this.intervalId);
+            this.intervalId = null;
+        }
+    }
+
     async processQueue() {
-        if (this.isProcessing) return;
+        if (this.isProcessing || this.isShuttingDown) return;
         this.isProcessing = true;
 
         try {

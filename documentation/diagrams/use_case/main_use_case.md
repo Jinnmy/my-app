@@ -30,8 +30,8 @@ flowchart LR
             UC_Share([Share Links])
             UC_Meta([Edit Metadata/Tags])
             UC_View([View/Stream Media])
-            UC_View([View/Edit Document])
-            UC_View([View/Edit PDF])
+            UC_docx([View/Edit Document])
+            UC_pdf([View/Edit PDF])
         end
         
         %% Vault Module
@@ -68,6 +68,8 @@ flowchart LR
     User --> UC_VaultLock
     User --> UC_Prefs
     User --> UC_Profile
+    User --> UC_docx
+    User --> UC_pdf
 
     %% Relationships - Admin (Specifics)
     Admin --> UC_Setup

@@ -2,6 +2,20 @@ async function initSettingsPage() {
     const toggle = document.getElementById('minimizeToTrayToggle');
     if (!toggle) return;
 
+    // Check User permission to hide sections
+    try {
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        if (user.role !== 'admin') {
+            const sectionsToHide = ['settings-app-defaults', 'settings-ai-features', 'settings-danger-zone'];
+            sectionsToHide.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = 'none';
+            });
+        }
+    } catch (e) {
+        console.error('Error checking user permissions', e);
+    }
+
     // Load initial state
     try {
         const token = localStorage.getItem('token');
@@ -199,47 +213,125 @@ async function initSettingsPage() {
 
     // Factory Reset Logic
     const factoryResetBtn = document.getElementById('factoryResetBtn');
-    if (factoryResetBtn) {
-        factoryResetBtn.addEventListener('click', async () => {
-            // First confirmation
-            if (!confirm('WARNING: Are you sure you want to perform a Factory Reset? This will DELETE ALL DATA and cannot be undone.')) {
-                return;
-            }
+    const passwordModal = document.getElementById('passwordModal');
+    const modalInput = document.getElementById('modalPasswordInput');
+    const modalConfirmBtn = document.getElementById('modalConfirmBtn');
+    const modalCancelBtn = document.getElementById('modalCancelBtn');
 
-            // Second confirmation (Safety check)
-            if (!confirm('Final Confirmation: All users, files, and settings will be permanently lost. The app will restart. Proceed?')) {
-                return;
-            }
+    if (factoryResetBtn && passwordModal) {
+        let resolvePassword = null;
 
-            try {
-                factoryResetBtn.disabled = true;
-                factoryResetBtn.textContent = 'Resetting...';
+        modalConfirmBtn.onclick = () => {
+            if (resolvePassword) resolvePassword(modalInput.value);
+            passwordModal.style.display = 'none';
+            modalInput.value = '';
+        };
 
-                const token = localStorage.getItem('token');
-                const response = await fetch('/api/system/factory-reset', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
+        modalCancelBtn.onclick = () => {
+            if (resolvePassword) resolvePassword(null);
+            passwordModal.style.display = 'none';
+            modalInput.value = '';
+        };
 
-                const result = await response.json();
+        const getPassword = () => {
+            return new Promise((resolve) => {
+                resolvePassword = resolve;
+                modalInput.value = '';
+                modalInput.disabled = false;
+                passwordModal.style.display = 'flex';
 
-                if (response.ok) {
-                    alert('Reset complete. The application will now restart.');
-                    // In case the backend restart prompt doesn't kill the page immediately
-                    document.body.innerHTML = '<div style="color:white;text-align:center;padding:50px;">Resetting application...</div>';
-                } else {
-                    throw new Error(result.error || 'Reset failed');
+                // Ensure window itself has focus (native dialogs can steal it)
+                window.focus();
+
+                // Aggressive focus strategy
+                const forceFocus = (source) => {
+                    // console.log(`Attempting focus (${source})...`);
+                    modalInput.blur();
+                    modalInput.focus();
+                };
+
+                // 1. Immediate
+                forceFocus('immediate');
+
+                // 2. Next Frame
+                requestAnimationFrame(() => forceFocus('raf'));
+
+                // 3. Timeouts
+                setTimeout(() => forceFocus('t50'), 50);
+                setTimeout(() => forceFocus('t150'), 150);
+
+                // Electron specific handling
+                if (window.electronAPI && window.electronAPI.isElectron) {
+                    setTimeout(() => {
+                        // console.log('Electron focus enforcement');
+                        window.focus(); // Force window focus again
+                        modalInput.click(); // Simulate interaction
+                        forceFocus('electron-delayed');
+                    }, 300);
                 }
+            });
+        };
 
-            } catch (error) {
-                console.error('Factory Reset Error:', error);
-                alert('Factory reset failed: ' + error.message);
-                factoryResetBtn.disabled = false;
-                factoryResetBtn.textContent = 'Reset Application';
+        // Ensure clicking modal background refocuses input
+        passwordModal.addEventListener('click', (e) => {
+            if (e.target === passwordModal) {
+                modalInput.focus();
             }
         });
+
+        // Prevent duplicate listeners if init is called multiple times on same element
+        if (!factoryResetBtn.dataset.hasListener) {
+            factoryResetBtn.dataset.hasListener = 'true';
+            factoryResetBtn.addEventListener('click', async () => {
+                // First confirmation
+                if (!confirm('WARNING: Are you sure you want to perform a Factory Reset? This will DELETE ALL DATA and cannot be undone.')) {
+                    return;
+                }
+
+
+                const password = await getPassword();
+
+                if (!password) {
+                    return; // User cancelled or entered empty password
+                }
+
+                // Second confirmation (Safety check)
+                if (!confirm('Final Confirmation: All users, files, and settings will be permanently lost. The app will restart. Proceed?')) {
+                    return;
+                }
+
+                try {
+                    factoryResetBtn.disabled = true;
+                    factoryResetBtn.textContent = 'Resetting...';
+
+                    const token = localStorage.getItem('token');
+                    const response = await fetch('/api/system/factory-reset', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ password })
+                    });
+
+                    const result = await response.json();
+
+                    if (response.ok) {
+                        alert('Reset complete. The application will now restart.');
+                        // In case the backend restart prompt doesn't kill the page immediately
+                        document.body.innerHTML = '<div style="color:white;text-align:center;padding:50px;">Resetting application...</div>';
+                    } else {
+                        throw new Error(result.error || 'Reset failed');
+                    }
+
+                } catch (error) {
+                    console.error('Factory Reset Error:', error);
+                    alert('Factory reset failed: ' + error.message);
+                    factoryResetBtn.disabled = false;
+                    factoryResetBtn.textContent = 'Reset Application';
+                }
+            });
+        }
     }
 
 

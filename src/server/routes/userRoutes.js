@@ -7,6 +7,8 @@ const verifyAdmin = require('../middleware/adminMiddleware');
 
 // Public
 router.post('/login', userController.login);
+router.post('/forgot-password', userController.forgotPassword);
+router.post('/reset-password', userController.resetPassword);
 router.post('/', userController.createUser); // Public registration (optional, or restrict to admin too)
 
 // Protected (Any Authenticated User)

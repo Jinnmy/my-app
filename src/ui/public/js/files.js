@@ -40,6 +40,7 @@ async function initFilesPage() {
 
     // Setup Event Listeners
     setupFileEventListeners();
+    setupDragDropZone(); // New Fn
     setupContextMenu();
     setupMoveModal();
     setupMetadataModal();
@@ -49,6 +50,8 @@ async function initFilesPage() {
     setupTransferPanel();
     startTransferPolling();
     setupLockModals();
+    setupBulkActions();
+    setupSelectionBox();
     // setupSearch(); // Moved to global app.js
 }
 
@@ -208,7 +211,8 @@ function renderFiles(files) {
         }
 
         // Determine File Type
-        const isImage = file.type === 'file' && /\.(jpg|jpeg|png|gif|webp|heic)$/i.test(file.name);
+        const isImage = file.type === 'file' && /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
+        const isHeic = file.type === 'file' && /\.(heic)$/i.test(file.name);
         const isVideo = file.type === 'file' && /\.(mp4|webm|ogg|mkv)$/i.test(file.name);
         const isPdf = file.type === 'file' && file.name.toLowerCase().endsWith('.pdf');
         const isDocx = file.type === 'file' && file.name.toLowerCase().endsWith('.docx');
@@ -226,8 +230,6 @@ function renderFiles(files) {
             if (file.is_locked) {
                 icon = `<svg xmlns="http://www.w3.org/2000/svg" class="file-icon" viewBox="0 0 24 24" fill="#888"><path d="M12 1.5a5.25 5.25 0 00-5.25 5.25v3H5.25A2.25 2.25 0 003 12v7.5A2.25 2.25 0 005.25 21.75h13.5A2.25 2.25 0 0021 19.5V12a2.25 2.25 0 00-2.25-2.25h-1.5v-3A5.25 5.25 0 0012 1.5zM8.25 6.75a3.75 3.75 0 117.5 0v3h-7.5v-3z"/></svg>`;
             } else if (file.is_encrypted) {
-                // Encrypted files don't have thumbnails for now, or we need to fetch them with key
-                // For now use a generic lock/encrypted icon
                 icon = `<svg xmlns="http://www.w3.org/2000/svg" class="file-icon" viewBox="0 0 24 24" fill="var(--primary-color)">
                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
@@ -235,6 +237,11 @@ function renderFiles(files) {
             } else {
                 icon = `<img src="${imageUrl}" alt="${file.name}" class="file-preview-img" loading="lazy" />`;
             }
+        } else if (isHeic) {
+            // Generic Image Icon for HEIC to avoid expensive preview
+            icon = `<svg xmlns="http://www.w3.org/2000/svg" class="file-icon" viewBox="0 0 24 24" fill="currentColor">
+                <path fill-rule="evenodd" d="M1.5 6a2.25 2.25 0 012.25-2.25h16.5A2.25 2.25 0 0122.5 6v12a2.25 2.25 0 01-2.25 2.25H3.75A2.25 2.25 0 011.5 18V6zM3 16.06V18c0 .414.336.75.75.75h16.5A.75.75 0 0021 18v-1.94l-2.69-2.689a1.5 1.5 0 00-2.12 0l-.88.879.97.97a.75.75 0 11-1.06 1.06l-5.16-5.159a1.5 1.5 0 00-2.12 0L3 16.061zm10.125-7.81a1.125 1.125 0 112.25 0 1.125 1.125 0 01-2.25 0z" clip-rule="evenodd" />
+            </svg>`;
         } else if (isVideo) {
             icon = `
             <svg xmlns="http://www.w3.org/2000/svg" class="file-icon video-icon" viewBox="0 0 24 24" fill="currentColor">
@@ -264,13 +271,83 @@ function renderFiles(files) {
             ${file.is_encrypted ? '<div class="lock-overlay" style="color: var(--primary-color)"><i class="fas fa-key"></i></div>' : ''}
         `;
 
-        // If locked, single click prompts password (for view)
-        // If not locked, normal behavior
+        // Selection Styling
+        if (selectedFiles.has(file.id)) {
+            fileCard.classList.add('selected');
+        }
+
+        // Add Checkbox and Wrapper
+        const inner = fileCard.innerHTML;
+        fileCard.innerHTML = `<div class="file-checkbox"></div>` + inner;
+
+        // Checkbox Click
+        const checkbox = fileCard.querySelector('.file-checkbox');
+        if (checkbox) {
+            checkbox.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                toggleSelection(file.id);
+            });
+        }
+
+        // Multi-select Click Interceptor
+        fileCard.addEventListener('click', (e) => {
+            if (e.ctrlKey || e.metaKey || e.shiftKey || document.body.dataset.selectionMode === 'true') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                handleSelectionClick(e, file.id);
+            } else if (isLongClick) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                isLongClick = false;
+            }
+        }, true);
+
+        // Mouse Down for Long Click
+        fileCard.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            mouseStartX = e.clientX;
+            mouseStartY = e.clientY;
+            isLongClick = false;
+
+            mouseTimer = setTimeout(() => {
+                isLongClick = true;
+                toggleSelection(file.id);
+                if (navigator.vibrate) navigator.vibrate(50);
+            }, 600);
+        });
+
+        // Cancel on Move or Up/Leave
+        const cancelLongPress = (e) => {
+            if (mouseTimer) {
+                clearTimeout(mouseTimer);
+                mouseTimer = null;
+            }
+            if (e.type === 'mousemove') {
+                const dist = Math.sqrt(Math.pow(e.clientX - mouseStartX, 2) + Math.pow(e.clientY - mouseStartY, 2));
+                if (dist > 5) {
+                    // It's a drag, ignore
+                }
+            }
+        };
+
+        fileCard.addEventListener('mousemove', (e) => {
+            const dist = Math.sqrt(Math.pow(e.clientX - mouseStartX, 2) + Math.pow(e.clientY - mouseStartY, 2));
+            if (dist > 5) {
+                if (mouseTimer) {
+                    clearTimeout(mouseTimer);
+                    mouseTimer = null;
+                }
+            }
+        });
+        fileCard.addEventListener('mouseup', cancelLongPress);
+        fileCard.addEventListener('mouseleave', cancelLongPress);
+
+        // Standard Actions
         if (file.is_locked) {
             fileCard.classList.add('locked-file');
             fileCard.addEventListener('click', () => {
                 promptUnlock(file.id, false, (token) => {
-                    // Determine what to do after unlock
                     if (isImage) {
                         const fullUrl = `/api/files/download/${file.id}?token=${localStorage.getItem('token')}&unlockToken=${token}`;
                         window.open(fullUrl, '_blank');
@@ -287,54 +364,31 @@ function renderFiles(files) {
             });
         } else {
             if (file.type === 'folder') {
+                fileCard.addEventListener('click', () => enterFolder(file.id, file.name));
+            } else if (isImage || isHeic) {
                 fileCard.addEventListener('click', () => {
-                    enterFolder(file.id, file.name);
-                });
-            }
-
-            if (isImage) {
-                fileCard.addEventListener('click', () => {
-                    console.log('Image Clicked:', file.name);
-                    console.log('isVaultMode:', isVaultMode);
-                    console.log('isEncrypted:', file.is_encrypted);
-                    console.log('vaultKey:', vaultKey ? 'PRESENT' : 'MISSING');
-
                     const token = localStorage.getItem('token');
                     let url = `/api/files/download/${file.id}?token=${token}`;
                     if (isVaultMode && file.is_encrypted && vaultKey) {
                         url += `&vaultKey=${vaultKey}`;
                     }
-                    console.log('Opening URL:', url);
                     window.open(url, '_blank');
                 });
-            }
-
-            if (isVideo) {
+            } else if (isVideo) {
+                fileCard.addEventListener('click', () => playVideo(file.id, file.name));
+            } else if (isPdf) {
                 fileCard.addEventListener('click', () => {
-                    playVideo(file.id, file.name);
-                });
-            }
-
-            if (isPdf) {
-                fileCard.addEventListener('click', () => {
-                    // isPdf already confirms it's a PDF file
                     const token = localStorage.getItem('token');
                     let viewerUrl = `pdf-viewer.html?id=${file.id}&name=${encodeURIComponent(file.name)}`;
-
-                    if (isVaultMode && file.is_encrypted) {
-                        if (vaultKey) {
-                            viewerUrl += `&vaultKey=${vaultKey}`;
-                        }
-                    }
-
+                    if (isVaultMode && file.is_encrypted && vaultKey) viewerUrl += `&vaultKey=${vaultKey}`;
                     window.open(viewerUrl, '_blank');
                 });
-            }
-
-            if (isDocx) {
-                fileCard.addEventListener('click', () => {
-                    editFile(file.id);
-                });
+            } else if (isDocx) {
+                fileCard.addEventListener('click', () => editFile(file.id));
+            } else {
+                // Generic file, perhaps download?
+                // The previous code didn't seem to have a default click for generic files unless it was a context menu thing?
+                // Actually, line 280ish in original code didn't have a default for generic.
             }
         }
 
@@ -352,13 +406,8 @@ function renderFiles(files) {
         fileCard.addEventListener('mouseleave', hideTooltip);
         fileCard.addEventListener('mousemove', moveTooltip);
 
-        if (file.is_encrypted && isVaultMode) {
-            // Only add generic download if not handled by known viewers
-            if (!isPdf && !isImage && !isVideo) {
-                fileCard.addEventListener('click', () => {
-                    downloadFile(file.id, null, true); // true = isEncrypted
-                });
-            }
+        if (file.is_encrypted && isVaultMode && !isPdf && !isImage && !isVideo) {
+            fileCard.addEventListener('click', () => downloadFile(file.id, null, true));
         }
 
         fileGrid.appendChild(fileCard);
@@ -469,7 +518,11 @@ async function createNewFolder() {
 async function handleFileUpload(e) {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    await uploadFiles(files);
+    e.target.value = ''; // Reset input
+}
 
+async function uploadFiles(fileList) {
     // Show Transfer Panel immediately
     const panel = document.getElementById('transfer-panel');
     if (panel) {
@@ -478,7 +531,7 @@ async function handleFileUpload(e) {
     }
 
     // Process all files
-    const uploadPromises = Array.from(files).map(async (file) => {
+    const uploadPromises = Array.from(fileList).map(async (file) => {
         const formData = new FormData();
         if (currentParentId) {
             formData.append('parentId', currentParentId);
@@ -519,12 +572,55 @@ async function handleFileUpload(e) {
 
         // Trigger generic poll to update UI
         fetchTransfers();
-
-        // Clear input
-        e.target.value = '';
     } catch (err) {
         console.error('Batch upload error', err);
         alert('Some uploads may have failed');
+    }
+}
+
+function setupDragDropZone() {
+    const dropZone = document.querySelector('.files-content-area');
+    if (!dropZone) return;
+
+    // Prevent default drag behaviors
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+    });
+
+    // Highlight drop zone
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, highlight, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, unhighlight, false);
+    });
+
+    // Handle dropped files
+    dropZone.addEventListener('drop', handleDropUpload, false);
+}
+
+function preventDefaults(e) {
+    e.preventDefault();
+    e.stopPropagation();
+}
+
+function highlight(e) {
+    const dropZone = document.querySelector('.files-content-area');
+    dropZone.classList.add('drag-over-zone');
+}
+
+function unhighlight(e) {
+    const dropZone = document.querySelector('.files-content-area');
+    dropZone.classList.remove('drag-over-zone');
+}
+
+function handleDropUpload(e) {
+    const dt = e.dataTransfer;
+    const files = dt.files;
+
+    if (files && files.length > 0) {
+        uploadFiles(files);
     }
 }
 
@@ -542,6 +638,14 @@ let contextMenuFileType = null;
 let contextMenuFileName = null;
 let contextMenuIsLocked = false;
 let contextMenuIsEncrypted = false;
+let selectedFiles = new Set();
+let lastSelectedId = null;
+let isSelectionDragging = false;
+let movingFiles = [];
+let mouseTimer = null;
+let mouseStartX = 0;
+let mouseStartY = 0;
+let isLongClick = false;
 
 function setupContextMenu() {
     const fileGrid = document.getElementById('file-grid');
@@ -567,6 +671,125 @@ function setupContextMenu() {
             const encrypted = fileCard.dataset.encrypted === "true";
 
             showContextMenu(e.pageX, e.pageY, id, type, name, locked, encrypted);
+        }
+    });
+
+    // Touch / Long Press Handling for Mobile
+    let touchTimer = null;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let longPressTriggered = false;
+
+    fileGrid.addEventListener('touchstart', (e) => {
+        const fileCard = e.target.closest('.file-card');
+        if (!fileCard) return;
+
+        // Block hover tooltips on touch
+        blockHoverTooltip = true;
+
+        // Store initial coordinates
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+        longPressTriggered = false;
+
+        touchTimer = setTimeout(() => {
+            // Long press detected
+            touchTimer = null;
+            longPressTriggered = true;
+
+            // Get card data
+            const id = fileCard.dataset.id;
+            const type = fileCard.dataset.type;
+            const name = fileCard.dataset.name;
+            const locked = fileCard.dataset.locked === "true";
+            const encrypted = fileCard.dataset.encrypted === "true";
+
+            // Haptic feedback (if supported)
+            if (navigator.vibrate) navigator.vibrate(50);
+
+            // Hide any existing tooltip so it doesn't cover menu
+            hideTooltip();
+
+            // Show menu at touch coordinates
+            showContextMenu(touchStartX, touchStartY, id, type, name, locked, encrypted);
+        }, 500); // 500ms threshold
+    }, { passive: false });
+
+    fileGrid.addEventListener('touchmove', (e) => {
+        if (!touchTimer) return;
+
+        const x = e.touches[0].clientX;
+        const y = e.touches[0].clientY;
+
+        // If moved significantly (scrolling), cancel the long press
+        if (Math.abs(x - touchStartX) > 10 || Math.abs(y - touchStartY) > 10) {
+            clearTimeout(touchTimer);
+            touchTimer = null;
+        }
+    }, { passive: true });
+
+    const clearTouchTimer = () => {
+        if (touchTimer) {
+            clearTimeout(touchTimer);
+            touchTimer = null;
+        }
+    };
+
+    fileGrid.addEventListener('touchend', (e) => {
+        if (touchTimer) {
+            clearTimeout(touchTimer);
+            touchTimer = null;
+        }
+
+        if (longPressTriggered) {
+            if (e.cancelable) e.preventDefault();
+            longPressTriggered = false;
+            return; // Detected long press, so stop here
+        }
+
+        // Tap Detection Logic
+        const currentTime = new Date().getTime();
+        const tapLength = currentTime - lastTapTime;
+        const fileCard = e.target.closest('.file-card');
+
+        if (tapLength < 300 && tapLength > 0) {
+            // Double Tap -> Open File
+            if (tapTimeout) clearTimeout(tapTimeout);
+
+            // Trigger standard click logic (which opens/downloads)
+            if (fileCard) fileCard.click();
+
+            e.preventDefault(); // Prevent zoom or other defaults
+        } else {
+            // Single Tap -> metadata
+            // Prevent default click behavior so we don't open the file
+            if (e.cancelable) e.preventDefault();
+
+            tapTimeout = setTimeout(() => {
+                // Show Metadata Tooltip
+                if (fileCard) {
+                    // Use initial touch coordinates for tooltip position
+                    const mockEvent = {
+                        clientX: touchStartX,
+                        clientY: touchStartY
+                    };
+                    // FORCE tooltip logic (bypass blockHoverTooltip)
+                    showTooltip(mockEvent, fileCard, true);
+                }
+            }, 300);
+        }
+        lastTapTime = currentTime;
+    });
+
+    fileGrid.addEventListener('touchcancel', () => {
+        if (touchTimer) {
+            clearTimeout(touchTimer);
+            touchTimer = null;
+        }
+        longPressTriggered = false;
+        if (tapTimeout) {
+            clearTimeout(tapTimeout);
+            tapTimeout = null;
         }
     });
 
@@ -906,9 +1129,21 @@ function setupMoveModal() {
 
     if (confirmBtn) {
         confirmBtn.onclick = async () => {
-            if (!moveTargetId || !fileToMoveId) return;
-            await moveFile(fileToMoveId, moveTargetId, fileToMoveToken);
+            if (!moveTargetId || movingFiles.length === 0) return;
+
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = 'Moving...';
+
+            for (const id of movingFiles) {
+                await moveFile(id, moveTargetId, fileToMoveToken);
+            }
+
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Move Here';
             closeModal();
+            loadFiles(currentParentId, currentPage);
+            selectedFiles.clear();
+            updateBulkActionBar();
         };
     }
 }
@@ -956,8 +1191,12 @@ function createMoveResultItem(id, name, path) {
     return div;
 }
 
-function openMoveModal(id, unlockToken = null) {
-    fileToMoveId = id;
+function openMoveModal(idOrIds, unlockToken = null) {
+    if (Array.isArray(idOrIds)) {
+        movingFiles = idOrIds;
+    } else {
+        movingFiles = idOrIds ? [idOrIds] : [];
+    }
     fileToMoveToken = unlockToken;
     moveTargetId = null;
     const confirmBtn = document.getElementById('btn-confirm-move');
@@ -1627,8 +1866,18 @@ function createTooltip() {
     document.body.appendChild(tooltipEl);
 }
 
-function showTooltip(e, card) {
+let blockHoverTooltip = false;
+
+// Reset blocking on mouse move (desktop usage)
+document.addEventListener('mousemove', () => {
+    blockHoverTooltip = false;
+});
+
+function showTooltip(e, card, force = false) {
     if (!tooltipEl) createTooltip();
+
+    // If generic hover (not forced) and we are blocking (mobile/touch), ignore
+    if (blockHoverTooltip && !force) return;
 
     const name = card.dataset.name;
     const caption = card.dataset.caption;
@@ -1769,7 +2018,12 @@ function setupMetadataModal() {
 
     if (saveBtn) {
         saveBtn.onclick = async () => {
-            let name = document.getElementById('meta-name').value;
+            let name = document.getElementById('meta-name').value.trim();
+            if (!name) {
+                alert('Name cannot be empty');
+                return;
+            }
+
             if (metadataFileExtension) {
                 name += metadataFileExtension;
             }
@@ -2243,4 +2497,178 @@ function setupVaultEventListeners() {
     if (fileInput) {
         fileInput.onchange = handleFileUpload;
     }
+}
+
+// --- Multi-Select Helper Functions ---
+
+function handleSelectionClick(e, id) {
+    if (e.shiftKey && lastSelectedId) {
+        // Range Selection
+        const cards = Array.from(document.querySelectorAll('.file-card'));
+        const lastIdx = cards.findIndex(c => c.dataset.id === lastSelectedId);
+        const currIdx = cards.findIndex(c => c.dataset.id === id);
+
+        if (lastIdx !== -1 && currIdx !== -1) {
+            const start = Math.min(lastIdx, currIdx);
+            const end = Math.max(lastIdx, currIdx);
+
+            for (let i = start; i <= end; i++) {
+                const cId = cards[i].dataset.id;
+                selectedFiles.add(cId);
+                cards[i].classList.add('selected');
+                const cb = cards[i].querySelector('.file-checkbox');
+                if (cb) cb.style.opacity = 1;
+            }
+        }
+    } else {
+        // Toggle
+        toggleSelection(id);
+    }
+    updateBulkActionBar();
+}
+
+function toggleSelection(id) {
+    if (selectedFiles.has(id)) {
+        selectedFiles.delete(id);
+        lastSelectedId = null;
+    } else {
+        selectedFiles.add(id);
+        lastSelectedId = id;
+    }
+
+    const card = document.querySelector(`.file-card[data-id="${id}"]`);
+    if (card) {
+        if (selectedFiles.has(id)) {
+            card.classList.add('selected');
+        } else {
+            card.classList.remove('selected');
+        }
+    }
+    updateBulkActionBar();
+}
+
+function updateBulkActionBar() {
+    const bar = document.getElementById('bulk-action-bar');
+    const countEl = document.getElementById('selection-count');
+    if (!bar) return;
+
+    if (selectedFiles.size > 0) {
+        bar.classList.add('visible');
+        countEl.textContent = `${selectedFiles.size} Selected`;
+    } else {
+        bar.classList.remove('visible');
+    }
+}
+
+function setupBulkActions() {
+    const deleteBtn = document.getElementById('btn-bulk-delete');
+    const moveBtn = document.getElementById('btn-bulk-move');
+    const cancelBtn = document.getElementById('btn-bulk-cancel');
+
+    if (deleteBtn) deleteBtn.onclick = bulkDelete;
+    if (moveBtn) moveBtn.onclick = bulkMove;
+    if (cancelBtn) cancelBtn.onclick = () => {
+        selectedFiles.clear();
+        document.querySelectorAll('.file-card.selected').forEach(c => c.classList.remove('selected'));
+        updateBulkActionBar();
+    };
+}
+
+async function bulkDelete() {
+    if (!confirm(`Are you sure you want to delete ${selectedFiles.size} items?`)) return;
+
+    const ids = Array.from(selectedFiles);
+    const token = localStorage.getItem('token');
+
+    for (const id of ids) {
+        try {
+            const res = await fetch(`/api/files/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+        } catch (e) { console.error(e); }
+    }
+
+    selectedFiles.clear();
+    updateBulkActionBar();
+    await loadFiles(currentParentId, currentPage); // Reload
+}
+
+function bulkMove() {
+    const ids = Array.from(selectedFiles);
+    if (ids.length === 0) return;
+    const token = localStorage.getItem('token');
+    // Reuse modal
+    openMoveModal(ids, token);
+}
+
+function setupSelectionBox() {
+    const container = document.querySelector('.files-content-area');
+    const box = document.getElementById('selection-box');
+    if (!container || !box) return;
+
+    let startX, startY;
+
+    container.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.file-card')) return;
+
+        isSelectionDragging = true;
+        // Use Viewport coordinates directly because .selection-box is position: fixed
+        startX = e.clientX;
+        startY = e.clientY;
+
+        box.style.left = startX + 'px';
+        box.style.top = startY + 'px';
+        box.style.width = '0px';
+        box.style.height = '0px';
+        box.style.display = 'block';
+
+        if (!e.ctrlKey && !e.shiftKey) {
+            selectedFiles.clear();
+            document.querySelectorAll('.file-card.selected').forEach(c => c.classList.remove('selected'));
+            updateBulkActionBar();
+        }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isSelectionDragging) return;
+
+        const currentX = e.clientX;
+        const currentY = e.clientY;
+
+        const width = Math.abs(currentX - startX);
+        const height = Math.abs(currentY - startY);
+        const left = Math.min(currentX, startX);
+        const top = Math.min(currentY, startY);
+
+        box.style.width = width + 'px';
+        box.style.height = height + 'px';
+        box.style.left = left + 'px';
+        box.style.top = top + 'px';
+
+        // Collision logic
+        const cards = document.querySelectorAll('.file-card');
+        const boxRect = box.getBoundingClientRect(); // Fixed position rect is viewport rect
+
+        cards.forEach(card => {
+            const cardRect = card.getBoundingClientRect();
+
+            if (boxRect.left < cardRect.right && boxRect.right > cardRect.left &&
+                boxRect.top < cardRect.bottom && boxRect.bottom > cardRect.top) {
+
+                if (!selectedFiles.has(card.dataset.id)) {
+                    card.classList.add('selected');
+                    selectedFiles.add(card.dataset.id);
+                }
+            }
+        });
+        updateBulkActionBar();
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (isSelectionDragging) {
+            isSelectionDragging = false;
+            box.style.display = 'none';
+        }
+    });
 }

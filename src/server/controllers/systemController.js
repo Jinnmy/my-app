@@ -3,34 +3,104 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const UserModel = require('../models/userModel');
+const bcrypt = require('bcryptjs');
+const TransferService = require('../services/transferService');
 let electronApp = null;
 
 const setElectronApp = (app) => {
     electronApp = app;
 };
 
-const runPowerShell = (command) => {
+const runPowerShell = (command, asAdmin = false) => {
     return new Promise((resolve, reject) => {
         const tempFilePath = path.join(os.tmpdir(), `ps_script_${Date.now()}_${Math.random().toString(36).substring(7)}.ps1`);
+
+        // Paths for stdout/stderr capture when running as admin
+        const tempStdout = path.join(os.tmpdir(), `ps_out_${Date.now()}.txt`);
+        const tempStderr = path.join(os.tmpdir(), `ps_err_${Date.now()}.txt`);
 
         fs.writeFile(tempFilePath, command, (writeErr) => {
             if (writeErr) {
                 return reject(new Error(`Failed to write temp PowerShell script: ${writeErr.message}`));
             }
 
-            const psCommand = `powershell -NoProfile -ExecutionPolicy Bypass -File "${tempFilePath}"`;
+            let psCommand;
+            let wrapperScriptPath = null;
+
+            if (asAdmin) {
+                // Secondary wrapper script approach to avoid quoting hell
+                wrapperScriptPath = path.join(os.tmpdir(), `ps_wrapper_${Date.now()}_${Math.random().toString(36).substring(7)}.ps1`);
+
+                // Helper to quote paths for PowerShell single-quoted strings
+                // We use single quotes in the wrapper content
+                const psQuote = (s) => `'${s.replace(/'/g, "''")}'`;
+
+                // Wrapper script content: executes the target script and redirects output
+                const wrapperContent = `
+$ErrorActionPreference = 'Stop'
+try {
+    & ${psQuote(tempFilePath)} > ${psQuote(tempStdout)} 2> ${psQuote(tempStderr)}
+} catch {
+    $_.ToString() | Out-File ${psQuote(tempStderr)} -Append
+}
+`;
+                try {
+                    fs.writeFileSync(wrapperScriptPath, wrapperContent);
+                } catch (wrapperErr) {
+                    return reject(new Error(`Failed to write wrapper script: ${wrapperErr.message}`));
+                }
+
+                // Command to launch admin PowerShell running the wrapper
+                // Minimal quoting needed here: just the path to the wrapper
+
+                const wrapperArg = psQuote(wrapperScriptPath);
+
+                // USING ARRAY ARGUMENTS for Start-Process
+                // powershell -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'C:\Path...'"
+                psCommand = `powershell -Command "Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ${wrapperArg}"`;
+            } else {
+                psCommand = `powershell -NoProfile -ExecutionPolicy Bypass -File "${tempFilePath}"`;
+            }
 
             exec(psCommand, { maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-                // Cleanup temp file
+                // Determine output sources
+                if (asAdmin) {
+                    // Read from temp files
+                    let outContent = '';
+                    let errContent = '';
+
+                    try {
+                        if (fs.existsSync(tempStdout)) outContent = fs.readFileSync(tempStdout, 'utf8');
+                        if (fs.existsSync(tempStderr)) errContent = fs.readFileSync(tempStderr, 'utf8');
+                    } catch (readErr) {
+                        console.error('Failed to read admin output files:', readErr);
+                    }
+
+                    // Cleanup temp files
+                    try {
+                        if (fs.existsSync(tempStdout)) fs.unlinkSync(tempStdout);
+                        if (fs.existsSync(tempStderr)) fs.unlinkSync(tempStderr);
+                        if (wrapperScriptPath && fs.existsSync(wrapperScriptPath)) fs.unlinkSync(wrapperScriptPath);
+                    } catch (cleanupErr) {
+                        console.warn('Failed to cleanup admin temp files:', cleanupErr);
+                    }
+
+                    // Use read content as stdout/stderr
+                    stdout = outContent;
+                    stderr = errContent;
+                }
+
+                // Cleanup script file
                 fs.unlink(tempFilePath, (unlinkErr) => {
                     if (unlinkErr) console.warn(`Failed to delete temp file: ${unlinkErr.message}`);
                 });
 
                 console.log('STDOUT:', stdout);
                 console.log('STDERR:', stderr);
-                if (error) console.error(error);
 
-                if (error) {
+                if (error) console.error('Exec error:', error);
+
+                if (error || (stderr && stderr.trim().length > 0)) {
                     reject(new Error(stderr || error.message));
                 } else {
                     resolve(stdout.trim());
@@ -162,14 +232,8 @@ const systemController = {
     },
 
     saveStorageConfig: async (req, res) => {
-        // Check for Admin privileges
-        if (os.platform() === 'win32') {
-            try {
-                await runPowerShell('net session');
-            } catch (e) {
-                return res.status(403).json({ error: 'Administrator privileges required. Please restart the application as Administrator.' });
-            }
-        }
+        // We no longer check for "net session" here because we will elevate using Start-Process -Verb RunAs
+        // which will prompt the user for admin privileges if they are not already admin.
 
         const { disks, raidLevel } = req.body;
         let configPath = path.join(__dirname, '../config/storage.json');
@@ -180,7 +244,10 @@ const systemController = {
 
         try {
             if (os.platform() === 'win32' && disks && disks.length > 0) {
-                let psScript = '';
+                // Define path for result file
+                const resultFilePath = path.join(os.tmpdir(), `ps_result_${Date.now()}.json`);
+                // Helper to quote path for PowerShell
+                const psQuote = (s) => `'${s.replace(/'/g, "''")}'`;
 
                 if (raidLevel === 'existing') {
                     // Handle existing disk (no formatting)
@@ -195,13 +262,21 @@ const systemController = {
                             $partition = Get-Partition -DiskNumber $diskId | Where-Object { $_.DriveLetter -ne 0 -and $_.DriveLetter -ne $null } | Select-Object -First 1
                             
                             if ($partition) {
-                                Write-Host "VOLUME_PATH: $($partition.DriveLetter):\"
-                                Write-Host "Existing Volume Identified Successfully."
+                                $result = @{
+                                    Success = $true
+                                    VolumePath = "$($partition.DriveLetter):\\"
+                                    Message = "Existing Volume Identified Successfully."
+                                }
+                                $result | ConvertTo-Json | Out-File ${psQuote(resultFilePath)} -Encoding utf8
                             } else {
                                 throw "No active partition with a drive letter found on disk $diskId"
                             }
                         } catch {
-                            Write-Error "Failed to identify existing volume: $_"
+                             $errResult = @{
+                                Success = $false
+                                Error = $_.ToString()
+                            }
+                            $errResult | ConvertTo-Json | Out-File ${psQuote(resultFilePath)} -Encoding utf8
                             exit 1
                         }
                     `;
@@ -273,8 +348,13 @@ const systemController = {
                                     Write-Host "Initializing and Formatting..."
                                     $partition = Initialize-Disk -VirtualDisk $vdisk -PartitionStyle GPT -PassThru | New-Partition -AssignDriveLetter -UseMaximumSize
                                     $partition | Format-Volume -FileSystem NTFS -NewFileSystemLabel "NASStorage" -Confirm:$false
-                                    Write-Host "VOLUME_PATH: $($partition.DriveLetter):\"
-                                    Write-Host "Storage Setup Completed Successfully."
+                                    
+                                    $result = @{
+                                        Success = $true
+                                        VolumePath = "$($partition.DriveLetter):\\"
+                                        Message = "Storage Setup Completed Successfully."
+                                    }
+                                    $result | ConvertTo-Json | Out-File ${psQuote(resultFilePath)} -Encoding utf8
                                 } else {
                                     throw "Failed to create Virtual Disk."
                                 }
@@ -282,23 +362,56 @@ const systemController = {
                                 throw "Failed to create Storage Pool."
                             }
                         } catch {
-                            Write-Error "Setup Failed: $_"
+                            $errResult = @{
+                                Success = $false
+                                Error = $_.ToString()
+                            }
+                            $errResult | ConvertTo-Json | Out-File ${psQuote(resultFilePath)} -Encoding utf8
                             exit 1
                         }
                     `;
                 }
 
-                // Execute the script
-                const output = await runPowerShell(psScript);
-                console.log("Storage Setup Output:", output);
+                // Execute the script - NOW with ADMIN Privileges
+                console.log('Execute storage setup command (Admin Request)...');
 
-                // Parse volume path
-                const match = output.match(/VOLUME_PATH:\s*([A-Z]:\\?)/);
-                if (match && match[1]) {
-                    req.body.volumePath = match[1].endsWith('\\') ? match[1] : match[1] + '\\';
-                    console.log(`Detected Volume Path: ${req.body.volumePath}`);
+                // We execute the script, which now handles writing to the result file
+                try {
+                    const output = await runPowerShell(psScript, true);
+                    console.log("Storage Setup Output:", output);
+                } catch (execErr) {
+                    console.error("Script execution finished with error state (check result file):", execErr.message);
+                }
+
+                // Check for result file
+                if (fs.existsSync(resultFilePath)) {
+                    try {
+                        let resultFileContent = fs.readFileSync(resultFilePath, 'utf8');
+                        // Strip BOM if present (PowerShell 5.1 adds it by default for UTF8)
+                        resultFileContent = resultFileContent.replace(/^\uFEFF/, '');
+
+                        const result = JSON.parse(resultFileContent);
+
+                        // Cleanup
+                        fs.unlinkSync(resultFilePath);
+
+                        if (result.Success) {
+                            req.body.volumePath = result.VolumePath;
+                            console.log(`Detected Volume Path: ${req.body.volumePath}`);
+                        } else {
+                            throw new Error(result.Error || "Unknown script error");
+                        }
+                    } catch (parseErr) {
+                        console.error("Failed to parse result file:", parseErr);
+                        // Don't throw here if we just failed to parse result but script didn't seemingly fail,
+                        // although if we can't get volume path, it's a failure.
+                        if (!req.body.volumePath) {
+                            throw new Error("Failed to retrieve volume path from script result.");
+                        }
+                    }
                 } else {
-                    console.warn("Could not detect volume path from PowerShell output.");
+                    console.warn("Result file not found.");
+                    throw new Error("Script executed but returned no result file.");
                 }
             }
 
@@ -312,6 +425,11 @@ const systemController = {
             });
         } catch (error) {
             console.error('RAID Setup Error:', error);
+
+            if (error.message && (error.message.includes('Access denied') || error.message.includes('Access is denied'))) {
+                return res.status(403).json({ error: 'Administrator privileges required. Please restart the application as Administrator.' });
+            }
+
             res.status(500).json({ error: 'Failed to configure storage: ' + error.message });
         }
     },
@@ -405,75 +523,86 @@ const systemController = {
     factoryReset: async (req, res) => {
         try {
             console.log("Initiating Factory Reset...");
+            const { password } = req.body;
 
-            // 1. Close Database Connection
-            // We need to require db to close it, if it's exported as a singleton
-            const db = require('../config/database');
-            db.close((err) => {
-                if (err) console.error('Error closing database:', err.message);
-                else console.log('Database connection closed.');
+            if (!password) {
+                return res.status(400).json({ error: 'Password is required' });
+            }
 
-                // 2. Delete Files
-                const filesToDelete = [
-                    'database.sqlite',
-                    'config/storage.json',
-                    'config/settings.json'
-                ];
+            // Verify Admin Password
+            const userId = req.user.id;
+            UserModel.findById(userId, (err, user) => {
+                if (err) return res.status(500).json({ error: 'Database error' });
+                if (!user) return res.status(404).json({ error: 'User not found' });
 
-                const isPackaged = electronApp && electronApp.isPackaged;
+                if (!bcrypt.compareSync(password, user.password)) {
+                    return res.status(403).json({ error: 'Incorrect password' });
+                }
 
-                filesToDelete.forEach(file => {
-                    // We need to be aggressive about deleting from ALL possible locations
-                    // because dev/prod and 'userData' vs local can get mixed up.
+                // Proceed with reset
+                const db = require('../config/database');
+                db.close((err) => {
+                    if (err) console.error('Error closing database:', err.message);
+                    if (err) console.error('Error closing database:', err.message);
+                    else console.log('Database connection closed.');
 
-                    const pathsToDelete = [];
+                    // Stop Background Services
+                    TransferService.stop();
 
-                    // 1. Global userData path (Always check this)
-                    if (electronApp) {
-                        const userDataPath = electronApp.getPath('userData');
-                        if (file === 'database.sqlite') {
-                            pathsToDelete.push(path.join(userDataPath, 'database.sqlite'));
-                        } else {
-                            pathsToDelete.push(path.join(userDataPath, path.basename(file)));
-                        }
-                    }
+                    // 2. Delete Files
+                    const filesToDelete = [
+                        'database.sqlite',
+                        'config/storage.json',
+                        'config/settings.json'
+                    ];
 
-                    // 2. Local Source path (Critical for Dev mode)
-                    // file is like 'config/storage.json' or 'database.sqlite'
-                    // __dirname is .../controllers
-                    if (file === 'database.sqlite') {
-                        pathsToDelete.push(path.join(__dirname, '../../', 'database.sqlite'));
-                    } else {
-                        // file is 'config/storage.json' -> ../config/storage.json
-                        pathsToDelete.push(path.join(__dirname, '../', file));
-                    }
+                    const isPackaged = electronApp && electronApp.isPackaged;
 
-                    pathsToDelete.forEach(p => {
-                        if (fs.existsSync(p)) {
-                            try {
-                                fs.unlinkSync(p);
-                                console.log(`Factory Reset: Successfully deleted ${p}`);
-                            } catch (e) {
-                                console.error(`Factory Reset: Failed to delete ${p}:`, e);
+                    filesToDelete.forEach(file => {
+                        const pathsToDelete = [];
+
+                        // 1. Global userData path
+                        if (electronApp) {
+                            const userDataPath = electronApp.getPath('userData');
+                            if (file === 'database.sqlite') {
+                                pathsToDelete.push(path.join(userDataPath, 'database.sqlite'));
+                            } else {
+                                pathsToDelete.push(path.join(userDataPath, path.basename(file)));
                             }
-                        } else {
-                            console.log(`Factory Reset: File not found at ${p} (clean)`);
                         }
+
+                        // 2. Local Source path
+                        if (file === 'database.sqlite') {
+                            pathsToDelete.push(path.join(__dirname, '../../', 'database.sqlite'));
+                        } else {
+                            pathsToDelete.push(path.join(__dirname, '../', file));
+                        }
+
+                        pathsToDelete.forEach(p => {
+                            if (fs.existsSync(p)) {
+                                try {
+                                    fs.unlinkSync(p);
+                                    console.log(`Factory Reset: Successfully deleted ${p}`);
+                                } catch (e) {
+                                    console.error(`Factory Reset: Failed to delete ${p}:`, e);
+                                }
+                            }
+                        });
                     });
+
+                    // 3. Send Response & Relaunch
+                    res.json({ success: true, message: 'Factory reset complete. Restarting...' });
+
+                    setTimeout(() => {
+                        if (electronApp) {
+                            electronApp.relaunch();
+                            electronApp.exit(0);
+                        } else {
+                            console.log('App would restart now if in Electron.');
+                            process.exit(0);
+                        }
+                    }, 1000);
                 });
-
-                // 3. Send Response & Relaunch
-                res.json({ success: true, message: 'Factory reset complete. Restarting...' });
-
-                setTimeout(() => {
-                    if (electronApp) {
-                        electronApp.relaunch();
-                        electronApp.exit(0);
-                    } else {
-                        console.log('App would restart now if in Electron.');
-                        process.exit(0);
-                    }
-                }, 1000);
             });
 
         } catch (error) {

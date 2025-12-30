@@ -11,7 +11,6 @@ const initUserTable = () => {
             role TEXT DEFAULT 'user',
             storage_limit INTEGER DEFAULT 10737418240, -- 10GB default
             used_storage INTEGER DEFAULT 0,
-            used_storage INTEGER DEFAULT 0,
             preferences TEXT DEFAULT '{}',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
@@ -59,6 +58,16 @@ const initUserTable = () => {
             db.run(migrationPreferences, (err) => {
                 if (!err) console.log('Added preferences column.');
             });
+
+            // Migration: Add reset password columns
+            const migrationResetToken = `ALTER TABLE users ADD COLUMN reset_password_token TEXT`;
+            db.run(migrationResetToken, (err) => {
+                if (!err) console.log('Added reset_password_token column.');
+            });
+            const migrationResetExpires = `ALTER TABLE users ADD COLUMN reset_password_expires DATETIME`;
+            db.run(migrationResetExpires, (err) => {
+                if (!err) console.log('Added reset_password_expires column.');
+            });
         }
     });
 };
@@ -67,11 +76,31 @@ initUserTable();
 
 class UserModel {
     static create(user, callback) {
-        const { username, email, password, role } = user;
+        const { username, email, password, role, storage_limit } = user;
         const userRole = role || 'user';
-        const sql = `INSERT INTO users (username, email, password, role, preferences) VALUES (?, ?, ?, ?, '{}')`;
-        db.run(sql, [username, email, password, userRole], function (err) {
-            callback(err, { id: this.lastID, ...user, role: userRole, preferences: {} });
+        // Use provided limit or default to 10GB
+        const limit = storage_limit !== undefined ? storage_limit : 10737418240;
+
+        const sql = `INSERT INTO users (username, email, password, role, storage_limit, preferences) VALUES (?, ?, ?, ?, ?, '{}')`;
+        db.run(sql, [username, email, password, userRole, limit], function (err) {
+            if (err) return callback(err);
+
+            // Safe access to this.lastID
+            let id = (this && this.lastID) ? this.lastID : 0;
+
+            if (!id) {
+                // Fallback: fetch directly from DB
+                db.get("SELECT last_insert_rowid() as id", (err, row) => {
+                    if (err) {
+                        // If fetching ID fails, just return user without ID or partial error
+                        console.error("Failed to retrieve last_insert_rowid:", err);
+                        return callback(null, { id: 0, ...user, role: userRole, preferences: {} });
+                    }
+                    callback(null, { id: row ? row.id : 0, ...user, role: userRole, preferences: {} });
+                });
+            } else {
+                callback(null, { id: id, ...user, role: userRole, preferences: {} });
+            }
         });
     }
 
@@ -111,7 +140,7 @@ class UserModel {
     static updateStorage(userId, delta, callback) {
         const sql = `UPDATE users SET used_storage = used_storage + ? WHERE id = ?`;
         db.run(sql, [delta, userId], function (err) {
-            if (callback) callback(err, this.changes);
+            if (callback) callback(err, (this && this.changes) ? this.changes : 0);
         });
     }
 
@@ -152,14 +181,35 @@ class UserModel {
         }
 
         db.run(sql, params, function (err) {
-            callback(err, this.changes);
+            callback(err, (this && this.changes) ? this.changes : 0);
         });
     }
 
     static delete(id, callback) {
         const sql = `DELETE FROM users WHERE id = ?`;
         db.run(sql, [id], function (err) {
-            callback(err, this.changes);
+            callback(err, (this && this.changes) ? this.changes : 0);
+        });
+    }
+
+    static saveResetToken(email, token, expires, callback) {
+        const sql = `UPDATE users SET reset_password_token = ?, reset_password_expires = ? WHERE email = ?`;
+        db.run(sql, [token, expires, email], function (err) {
+            callback(err, (this && this.changes) ? this.changes : 0);
+        });
+    }
+
+    static findByResetToken(token, callback) {
+        const sql = `SELECT * FROM users WHERE reset_password_token = ? AND reset_password_expires > ?`;
+        db.get(sql, [token, Date.now()], (err, row) => {
+            callback(err, UserModel._parseUser(row));
+        });
+    }
+
+    static clearResetToken(id, callback) {
+        const sql = `UPDATE users SET reset_password_token = NULL, reset_password_expires = NULL WHERE id = ?`;
+        db.run(sql, [id], function (err) {
+            callback(err);
         });
     }
 
