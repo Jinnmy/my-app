@@ -3,7 +3,9 @@ const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 
 module.exports = {
   packagerConfig: {
-    asar: true,
+    asar: {
+      unpack: "**/node_modules/onnxruntime-node/**"
+    },
     icon: './src/ui/public/assets/logo', // Forge auto-adds .ico for Windows
     ignore: [
       /^\/out($|\/)/,        // Ignore the build output folder

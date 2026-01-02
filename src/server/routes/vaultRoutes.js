@@ -5,6 +5,7 @@ const verifyToken = require('../middleware/authMiddleware');
 
 router.post('/enable', verifyToken, VaultController.enableVault);
 router.post('/disable', verifyToken, VaultController.disableVault);
+router.post('/change-password', verifyToken, VaultController.changePassword); // New Route
 router.post('/verify', verifyToken, VaultController.verifyPassword);
 router.get('/status', verifyToken, VaultController.getStatus);
 

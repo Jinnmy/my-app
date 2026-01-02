@@ -94,6 +94,48 @@
                     </div>
                 </div>
             </div>
+
+            <!-- AI Health Insights Widget (New) -->
+            <div class="dashboard-widget ai-health-widget" id="aiHealthWidget">
+                <div class="widget-header">
+                    <h3>AI Health Insights</h3>
+                    <span class="status-badge" id="aiGlobalStatus">Loading...</span>
+                </div>
+                <div class="widget-content relative">
+                    <div id="aiLoadingOverlay" class="loading-overlay" style="display: flex;">
+                        <div class="spinner"></div>
+                    </div>
+                    <div class="ai-stats-summary">
+                        <div class="stat-box">
+                            <span class="stat-label">Avg Anomaly Score</span>
+                            <span class="stat-value highlight" id="aiAvgAnomaly">-</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-label">Disks Monitored</span>
+                            <span class="stat-value" id="aiDiskCount">-</span>
+                        </div>
+                    </div>
+                    <div class="ai-system-metrics">
+                        <div class="metric-row">
+                            <span>AI-Reported CPU</span>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="aiCpuFill" style="width: 0%;"></div>
+                            </div>
+                            <span id="aiCpuVal">0%</span>
+                        </div>
+                        <div class="metric-row">
+                            <span>AI-Reported RAM</span>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="aiRamFill" style="width: 0%;"></div>
+                            </div>
+                            <span id="aiRamVal">0%</span>
+                        </div>
+                    </div>
+                    <div class="widget-footer">
+                        <span class="last-scan">Last AI Scan: <span id="aiLastScan">Just now</span></span>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Row 2: Recent Files (Existing) -->

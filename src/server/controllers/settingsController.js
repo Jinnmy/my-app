@@ -78,6 +78,7 @@ exports.updateSettings = (req, res) => {
 // AI Helper Functions
 const BLIP_DIR = path.join(__dirname, '../../../resources/blip');
 const FLAN_DIR = path.join(__dirname, '../../../resources/python/flan_t5_onnx');
+const HW_MONITOR_DIR = path.join(__dirname, '../../../resources/hardware-monitor');
 const SETUP_SCRIPT = path.join(__dirname, '../../../resources/setup_models.py');
 
 exports.getAiStatus = (req, res) => {
@@ -91,6 +92,9 @@ exports.getAiStatus = (req, res) => {
         // Check for Flan (checking encoder as proxy)
         const flanReady = fs.existsSync(path.join(FLAN_DIR, 'encoder_model.onnx'));
 
+        // Check for Health Model
+        const healthReady = fs.existsSync(path.join(HW_MONITOR_DIR, 'health_model.onnx'));
+
         // Check for Python environment
         let pythonReady = true;
         if (require('electron').app.isPackaged) {
@@ -98,9 +102,10 @@ exports.getAiStatus = (req, res) => {
         }
 
         res.json({
-            ready: blipReady && flanReady && pythonReady,
+            ready: blipReady && flanReady && healthReady && pythonReady,
             blipReady,
             flanReady,
+            healthReady,
             pythonReady,
             enabled: settings.aiEnabled || false
         });
@@ -238,6 +243,23 @@ exports.offloadAiModels = (req, res) => {
 
         // Remove Flan models
         removeDir(FLAN_DIR);
+
+        // Remove Hardware Health Model Files
+        if (fs.existsSync(HW_MONITOR_DIR)) {
+            // Reordered to delete .pth and .data first, as .onnx might be locked by the runtime
+            const filesToRemove = ['health_model.pth', 'health_model.onnx.data', 'health_model.onnx'];
+            filesToRemove.forEach(file => {
+                const filePath = path.join(HW_MONITOR_DIR, file);
+                try {
+                    if (fs.existsSync(filePath)) {
+                        fs.unlinkSync(filePath);
+                        console.log(`Deleted: ${file}`);
+                    }
+                } catch (err) {
+                    console.warn(`Failed to delete ${file}:`, err.message);
+                }
+            });
+        }
 
         // Also disable AI in settings
         const settings = readSettings();

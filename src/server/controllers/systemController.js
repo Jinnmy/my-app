@@ -5,6 +5,8 @@ const path = require('path');
 const UserModel = require('../models/userModel');
 const bcrypt = require('bcryptjs');
 const TransferService = require('../services/transferService');
+const HardwareMonitor = require('../../../resources/hardware-monitor/monitor');
+let monitorInstance = null;
 let electronApp = null;
 
 const setElectronApp = (app) => {
@@ -202,6 +204,62 @@ const systemController = {
                     isBoot: d.IsBoot
                 }));
 
+                // AI Health Check
+                try {
+                    const settingsPath = electronApp && electronApp.isPackaged
+                        ? path.join(electronApp.getPath('userData'), 'settings.json')
+                        : path.join(__dirname, '../config/settings.json');
+
+                    if (fs.existsSync(settingsPath)) {
+                        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+                        if (settings.aiEnabled) {
+                            if (!monitorInstance) {
+                                const bundledPython = path.join(__dirname, '../../../resources/python_env/python.exe');
+                                const isPackaged = electronApp && electronApp.isPackaged;
+
+                                monitorInstance = new HardwareMonitor({
+                                    pythonPath: (isPackaged || fs.existsSync(bundledPython))
+                                        ? (isPackaged ? path.join(process.resourcesPath, 'python_env/python.exe') : bundledPython)
+                                        : 'python'
+                                });
+                            }
+
+                            const fullReport = await monitorInstance.runFullCheck();
+                            mappedDisks.forEach(disk => {
+                                // 1. Try matching by Model Name (Reliable)
+                                const predictionByModel = fullReport.disks.find(d =>
+                                    d.model && disk.name && d.model.toLowerCase().trim() === disk.name.toLowerCase().trim()
+                                );
+
+                                // 2. Try matching by Device Index (Fallback for generic names)
+                                const predictionByIndex = fullReport.disks.find(d => {
+                                    if (!d.device) return false;
+                                    // Map /dev/sd[a-z] to 0, 1, 2...
+                                    const match = d.device.match(/\/dev\/sd([a-z])/i);
+                                    if (match) {
+                                        const index = match[1].toLowerCase().charCodeAt(0) - 97;
+                                        return index.toString() === disk.device;
+                                    }
+                                    // Handle PHYSICALDRIVEN naming
+                                    const pdMatch = d.device.match(/PHYSICALDRIVE(\d+)/i);
+                                    if (pdMatch) {
+                                        return pdMatch[1] === disk.device;
+                                    }
+                                    return false;
+                                });
+
+                                const prediction = predictionByModel || predictionByIndex;
+                                if (prediction) {
+                                    disk.aiHealthStatus = prediction.prediction.status;
+                                    disk.anomalyScore = prediction.prediction.anomaly_score;
+                                }
+                            });
+                        }
+                    }
+                } catch (aiErr) {
+                    console.error('AI Health Prediction Error:', aiErr);
+                }
+
                 res.json(mappedDisks);
             } catch (err) {
                 res.status(500).json({ error: err.message });
@@ -212,6 +270,119 @@ const systemController = {
                 { device: '/dev/sda1', size: 100000000000, freeSpace: 50000000000, name: 'Main Disk', canPool: true, isBoot: false, healthStatus: 'Healthy' },
                 { device: '/dev/sda2', size: 500000000000, freeSpace: 0, name: 'System Disk', canPool: false, isBoot: true, healthStatus: 'Healthy' }
             ]);
+        }
+    },
+
+    startAiScheduler: () => {
+        const INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
+
+        const runJob = async () => {
+            try {
+                // Initialize monitor if needed
+                if (!monitorInstance) {
+                    const settingsPath = electronApp && electronApp.isPackaged
+                        ? path.join(electronApp.getPath('userData'), 'settings.json')
+                        : path.join(__dirname, '../config/settings.json');
+
+                    if (fs.existsSync(settingsPath)) {
+                        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+                        if (!settings.aiEnabled) return; // Don't run if disabled
+
+                        const bundledPython = path.join(__dirname, '../../../resources/python_env/python.exe');
+                        const isPackaged = electronApp && electronApp.isPackaged;
+                        monitorInstance = new HardwareMonitor({
+                            pythonPath: (isPackaged || fs.existsSync(bundledPython))
+                                ? (isPackaged ? path.join(process.resourcesPath, 'python_env/python.exe') : bundledPython)
+                                : 'python'
+                        });
+                    } else {
+                        return;
+                    }
+                }
+
+                console.log("Starting scheduled AI hardware check...");
+                const fullReport = await monitorInstance.runFullCheck();
+                monitorInstance.saveCachedReport(fullReport);
+                console.log("Scheduled check complete. Report cached.");
+            } catch (err) {
+                console.error("Scheduled AI check failed:", err);
+            }
+        };
+
+        // Run immediately on start (if no recent report exists)
+        setTimeout(async () => {
+            // Basic init check
+            await runJob();
+        }, 30000); // Wait 30s after startup to not hog resources
+
+        // Schedule periodic
+        setInterval(runJob, INTERVAL_MS);
+    },
+
+    getAiStats: async (req, res) => {
+        try {
+            const settingsPath = electronApp && electronApp.isPackaged
+                ? path.join(electronApp.getPath('userData'), 'settings.json')
+                : path.join(__dirname, '../config/settings.json');
+
+            if (!fs.existsSync(settingsPath)) {
+                return res.json({ enabled: false });
+            }
+
+            const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+            if (!settings.aiEnabled) {
+                return res.json({ enabled: false });
+            }
+
+            if (!monitorInstance) {
+                const bundledPython = path.join(__dirname, '../../../resources/python_env/python.exe');
+                const isPackaged = electronApp && electronApp.isPackaged;
+
+                monitorInstance = new HardwareMonitor({
+                    pythonPath: (isPackaged || fs.existsSync(bundledPython))
+                        ? (isPackaged ? path.join(process.resourcesPath, 'python_env/python.exe') : bundledPython)
+                        : 'python'
+                });
+            }
+
+            // Try loading cached report first
+            const cached = monitorInstance.loadCachedReport();
+            let fullReport = cached;
+
+            // If no cache or cache is too old (> 3 hours), run fresh
+            const MAX_AGE = 3 * 60 * 60 * 1000;
+            const now = Date.now();
+            if (!cached || (now - new Date(cached.timestamp).getTime() > MAX_AGE)) {
+                console.log("Cache miss or expired, running fresh check...");
+                fullReport = await monitorInstance.runFullCheck();
+                monitorInstance.saveCachedReport(fullReport);
+            } else {
+                console.log("Serving cached AI stats.");
+            }
+
+            // Calculate summary
+            let totalAnomaly = 0;
+            let diskCount = 0;
+            fullReport.disks.forEach(d => {
+                if (d.prediction && d.prediction.anomaly_score !== undefined) {
+                    totalAnomaly += d.prediction.anomaly_score;
+                    diskCount++;
+                }
+            });
+
+            res.json({
+                enabled: true,
+                timestamp: fullReport.timestamp,
+                metrics: fullReport.metrics,
+                summary: {
+                    avgAnomalyScore: diskCount > 0 ? parseFloat((totalAnomaly / diskCount).toFixed(4)) : 0,
+                    diskCount: diskCount,
+                    status: (totalAnomaly / diskCount) > 0.05 ? "Warning" : "Healthy"
+                }
+            });
+        } catch (err) {
+            console.error('AI Stats Retrieval Error:', err);
+            res.status(500).json({ error: err.message });
         }
     },
 

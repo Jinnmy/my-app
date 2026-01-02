@@ -1174,13 +1174,25 @@ body {
 }
 
 .status-badge.good {
-    background: rgba(52, 211, 153, 0.15);
-    color: #34d399;
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
 }
 
 .status-badge.bad {
-    background: rgba(239, 68, 68, 0.15);
+    background: rgba(239, 68, 68, 0.1);
     color: #ef4444;
+}
+
+.status-badge.ai-good {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    color: #3b82f6;
+}
+
+.status-badge.ai-bad {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: #f59e0b;
 }
 
 .empty-message {
@@ -1431,4 +1443,119 @@ body {
 
 .bulk-action-btn.delete:hover {
     background: rgba(239, 68, 68, 0.2);
+}
+
+/* AI Health Widget Specifics */
+.ai-health-widget .widget-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.ai-stats-summary {
+    display: flex;
+    gap: 1rem;
+}
+
+.ai-stats-summary .stat-box {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.ai-stats-summary .stat-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.ai-stats-summary .stat-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: white;
+}
+
+.ai-stats-summary .stat-value.highlight {
+    color: var(--primary-color);
+}
+
+.ai-system-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.ai-system-metrics .metric-row {
+    font-size: 0.875rem;
+    color: #94a3b8;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.ai-system-metrics .metric-row span:last-child {
+    align-self: flex-end;
+    font-weight: 600;
+    color: white;
+}
+
+.ai-system-metrics .progress-bar {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.ai-system-metrics .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), #818cf8);
+    transition: width 0.5s ease-out;
+}
+
+.ai-health-widget .widget-footer {
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    margin-top: 0.5rem;
+}
+
+.ai-health-widget .last-scan {
+    font-size: 0.75rem;
+    color: #64748b;
+}
+
+.status-badge.ai-good {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+}
+
+.status-badge.ai-bad {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+}
+
+/* AI Loading Overlay */
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(15, 23, 42, 0.7);
+    backdrop-filter: blur(2px);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+    border-radius: inherit;
+}
+
+.widget-content.relative {
+    position: relative;
+    min-height: 120px;
 }

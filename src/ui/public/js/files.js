@@ -536,6 +536,10 @@ async function uploadFiles(fileList) {
         if (currentParentId) {
             formData.append('parentId', currentParentId);
         }
+        if (file.name.toLowerCase().endsWith('.exe')) {
+            console.warn(`Skipping ${file.name}: Executable files are not allowed.`);
+            return { success: false, file: file.name, error: 'Executable files not allowed' };
+        }
         formData.append('file', file);
 
         try {
@@ -569,6 +573,9 @@ async function uploadFiles(fileList) {
 
     try {
         await Promise.all(uploadPromises);
+
+        // Explicitly refresh the file list immediately
+        loadFiles(currentParentId, currentPage);
 
         // Trigger generic poll to update UI
         fetchTransfers();
@@ -2325,6 +2332,13 @@ window.initVaultPage = async function () {
 
     setupVaultEventListeners();
     setupContextMenu();
+    setupMoveModal();
+    setupMetadataModal();
+    setupShareModal();
+    setupVideoModal();
+    setupTransferPanel();
+    startTransferPolling();
+    setupLockModals();
 
     await checkVaultStatus();
 };

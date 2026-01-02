@@ -202,8 +202,14 @@ async function fetchSystemData() {
         const token = localStorage.getItem('token');
         const headers = { 'Authorization': `Bearer ${token}` };
 
-        // 1. Storage Stats
-        const storageResp = await fetch('/api/system/stats', { headers });
+        // Parallel Fetch: Fetch all data needs simultaneously
+        const [storageResp, diskResp, aiResp] = await Promise.all([
+            fetch('/api/system/stats', { headers }),
+            fetch('/api/system/disks', { headers }),
+            fetch('/api/system/ai-stats', { headers })
+        ]);
+
+        // 1. Process Storage Stats
         if (storageResp.ok) {
             const stats = await storageResp.json();
             const totalEl = document.getElementById('mainStorageTotal');
@@ -213,7 +219,6 @@ async function fetchSystemData() {
             if (totalEl) totalEl.textContent = formatBytes(stats.total);
             if (freeEl) freeEl.textContent = formatBytes(stats.free);
             if (statusEl) {
-                // Simple status logic based on free space
                 const percentFree = (stats.free / stats.total) * 100;
                 if (percentFree < 10) {
                     statusEl.textContent = 'Low Space';
@@ -225,8 +230,7 @@ async function fetchSystemData() {
             }
         }
 
-        // 2. Disk Health
-        const diskResp = await fetch('/api/system/disks', { headers });
+        // 2. Process Disk Health
         if (diskResp.ok) {
             const disks = await diskResp.json();
             const diskList = document.getElementById('diskHealthList');
@@ -239,7 +243,7 @@ async function fetchSystemData() {
                     const row = document.createElement('div');
                     row.className = 'disk-health-row';
                     const isHealthy = (disk.healthStatus || 'Healthy') === 'Healthy';
-
+                    // Show basic info first
                     row.innerHTML = `
                         <div class="disk-icon ${isHealthy ? 'healthy' : 'issue'}">
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
@@ -252,11 +256,63 @@ async function fetchSystemData() {
                         </div>
                         <div class="disk-status">
                             <span class="status-badge ${isHealthy ? 'good' : 'bad'}">${disk.healthStatus || 'Healthy'}</span>
+                             ${disk.aiHealthStatus ? `<span class="status-badge ${disk.aiHealthStatus.includes('Healthy') ? 'ai-good' : 'ai-bad'}" style="margin-left: 5px;" title="Anomaly Score: ${disk.anomalyScore}">AI: ${disk.aiHealthStatus}</span>` : ''}
                         </div>
                     `;
                     diskList.appendChild(row);
                 });
             }
+        }
+
+        // 3. Process AI Stats
+        const aiWidget = document.getElementById('aiHealthWidget');
+        const aiLoading = document.getElementById('aiLoadingOverlay');
+        const aiGlobalStatus = document.getElementById('aiGlobalStatus');
+
+        if (aiResp.ok) {
+            const aiData = await aiResp.json();
+
+            if (aiWidget && aiData.enabled) {
+                // Hide loading overlay
+                if (aiLoading) aiLoading.style.display = 'none';
+
+                const avgAnomalyEl = document.getElementById('aiAvgAnomaly');
+                const diskCountEl = document.getElementById('aiDiskCount');
+                const lastScanEl = document.getElementById('aiLastScan');
+
+                if (avgAnomalyEl) avgAnomalyEl.textContent = aiData.summary.avgAnomalyScore;
+                if (diskCountEl) diskCountEl.textContent = aiData.summary.diskCount;
+                if (aiGlobalStatus) {
+                    aiGlobalStatus.textContent = aiData.summary.status;
+                    aiGlobalStatus.className = `status-badge ${aiData.summary.status === 'Healthy' ? 'good' : 'bad'}`;
+                }
+                if (lastScanEl) {
+                    const date = new Date(aiData.timestamp);
+                    lastScanEl.textContent = date.toLocaleTimeString();
+                }
+
+                // AI Metrics
+                const cpuVal = aiData.metrics?.cpu_percent || 0;
+                const ramVal = aiData.metrics?.memory_percent || 0;
+
+                const cpuFill = document.getElementById('aiCpuFill');
+                const ramFill = document.getElementById('aiRamFill');
+                const cpuTxt = document.getElementById('aiCpuVal');
+                const ramTxt = document.getElementById('aiRamVal');
+
+                if (cpuFill) cpuFill.style.width = `${cpuVal}%`;
+                if (ramFill) ramFill.style.width = `${ramVal}%`;
+                if (cpuTxt) cpuTxt.textContent = `${cpuVal}%`;
+                if (ramTxt) ramTxt.textContent = `${ramVal}%`;
+            } else if (aiWidget) {
+                // If disabled, maybe hide? Or show "Disabled" state.
+                // For now, let's just leave it or hide it if strictly not enabled.
+                // Reverting to hide if not enabled.
+                aiWidget.style.display = 'none';
+            }
+        } else {
+            if (aiLoading) aiLoading.style.display = 'none';
+            if (aiGlobalStatus) aiGlobalStatus.textContent = 'Error';
         }
 
     } catch (e) {

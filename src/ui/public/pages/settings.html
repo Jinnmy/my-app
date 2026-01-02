@@ -250,6 +250,38 @@
     }
 </style>
 
+<!-- Change Password Info Modal -->
+<!-- Change Password Form Modal -->
+<div id="changePasswordFormModal" class="modal">
+    <div class="modal-content">
+        <h3>Change Vault Password</h3>
+        <p class="text-muted" style="margin-bottom: 1rem; color: #9ca3af; font-size: 0.9rem;">
+            Enter your current password and choose a new one. <br>
+            <span style="color: #f59e0b;">Note: This process may take a few moments as it re-encrypts your files.</span>
+        </p>
+
+        <div class="form-group" style="text-align: left;">
+            <label class="form-label">Current Password</label>
+            <input type="password" id="cpOldPass" class="form-input" placeholder="Current Password">
+        </div>
+
+        <div class="form-group" style="text-align: left;">
+            <label class="form-label">New Password</label>
+            <input type="password" id="cpNewPass" class="form-input" placeholder="New Password">
+        </div>
+
+        <div class="form-group" style="text-align: left;">
+            <label class="form-label">Confirm New Password</label>
+            <input type="password" id="cpConfirmPass" class="form-input" placeholder="Confirm New Password">
+        </div>
+
+        <div class="modal-actions" style="margin-top: 1.5rem;">
+            <button id="cpCancelBtn" class="btn-secondary">Cancel</button>
+            <button id="cpSaveBtn" class="btn-primary">Change Password</button>
+        </div>
+    </div>
+</div>
+
 <!-- Password Modal -->
 <div id="passwordModal" class="modal">
     <div class="modal-content">

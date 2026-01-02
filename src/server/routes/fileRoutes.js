@@ -38,7 +38,19 @@ const storage = multer.diskStorage({
 
 const verifyToken = require('../middleware/authMiddleware');
 
-const upload = multer({ storage: storage });
+const fileFilter = (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext === '.exe') {
+        return cb(new Error('Executable files (.exe) are not allowed for security reasons.'), false);
+    }
+    cb(null, true);
+};
+
+const upload = multer({
+    storage: storage,
+    fileFilter: fileFilter,
+    limits: { fileSize: 1024 * 1024 * 500 } // 500MB limit for now
+});
 
 router.get('/', verifyToken, FileController.list);
 router.get('/encrypted', verifyToken, FileController.listVault);
@@ -50,7 +62,16 @@ router.post('/folder', verifyToken, FileController.createFolder);
 // Also, verifyToken must run before upload.single to protect the upload, but multer handles multipart/form-data.
 // If verifyToken reads body, it might fail if body isn't parsed yet. 
 // However, verifyToken only reads headers, so it's fine.
-router.post('/upload', verifyToken, upload.single('file'), FileController.uploadFile);
+router.post('/upload', verifyToken, (req, res, next) => {
+    upload.single('file')(req, res, (err) => {
+        if (err instanceof multer.MulterError) {
+            return res.status(400).json({ error: 'Upload error: ' + err.message });
+        } else if (err) {
+            return res.status(400).json({ error: err.message });
+        }
+        next();
+    });
+}, FileController.uploadFile);
 router.post('/check-exists', verifyToken, FileController.checkExistence);
 
 // Allocation Routes (Admin)

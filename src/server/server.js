@@ -14,7 +14,7 @@ app.use(express.static(path.join(__dirname, '../ui/public')));
 app.use(express.json());
 
 const systemRoutes = require('./routes/systemRoutes');
-const { setElectronApp } = require('./controllers/systemController');
+const { setElectronApp, systemController } = require('./controllers/systemController');
 const userRoutes = require('./routes/userRoutes');
 const fileRoutes = require('./routes/fileRoutes');
 
@@ -77,6 +77,9 @@ function startServer(electronAppInstance) {
             else if (changes > 0) console.log(`Cleaned up ${changes} old files from trash.`);
         });
     }, 24 * 60 * 60 * 1000);
+
+    // Start AI Hardware Scheduler (Runs every 3 hours)
+    systemController.startAiScheduler();
 
     return new Promise((resolve, reject) => {
         let currentPort = 3000;

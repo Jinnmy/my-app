@@ -93,7 +93,7 @@ async function initSettingsPage() {
         }
 
         // Specific checks if partially ready (optional refinement)
-        if (!status.ready && (status.blipReady || status.flanReady)) {
+        if (!status.ready && (status.blipReady || status.flanReady || status.healthReady)) {
             aiStatusText.textContent = 'Models Incomplete';
             aiStatusText.style.color = '#f59e0b'; // Orange
             // Allow offload if incomplete to clean up
@@ -213,127 +213,111 @@ async function initSettingsPage() {
 
     // Factory Reset Logic
     const factoryResetBtn = document.getElementById('factoryResetBtn');
+    // Generic Password Request Modal
     const passwordModal = document.getElementById('passwordModal');
     const modalInput = document.getElementById('modalPasswordInput');
     const modalConfirmBtn = document.getElementById('modalConfirmBtn');
     const modalCancelBtn = document.getElementById('modalCancelBtn');
+    const modalTitle = passwordModal.querySelector('h3');
+    const modalText = passwordModal.querySelector('p');
 
-    if (factoryResetBtn && passwordModal) {
-        let resolvePassword = null;
+    // Helper to request password
+    const requestPassword = (title, message) => {
+        return new Promise((resolve) => {
+            // Update Modal Text
+            if (title) modalTitle.textContent = title;
+            if (message) modalText.textContent = message;
 
-        modalConfirmBtn.onclick = () => {
-            if (resolvePassword) resolvePassword(modalInput.value);
-            passwordModal.style.display = 'none';
             modalInput.value = '';
-        };
+            modalInput.disabled = false;
+            passwordModal.style.display = 'flex';
 
-        modalCancelBtn.onclick = () => {
-            if (resolvePassword) resolvePassword(null);
-            passwordModal.style.display = 'none';
-            modalInput.value = '';
-        };
+            const cleanup = () => {
+                modalConfirmBtn.onclick = null;
+                modalCancelBtn.onclick = null;
+                // Reset text defaults if needed, or leave them
+            };
 
-        const getPassword = () => {
-            return new Promise((resolve) => {
-                resolvePassword = resolve;
-                modalInput.value = '';
-                modalInput.disabled = false;
-                passwordModal.style.display = 'flex';
+            modalConfirmBtn.onclick = () => {
+                const val = modalInput.value;
+                if (!val) return; // Maybe shake input?
+                resolve(val);
+                passwordModal.style.display = 'none';
+                cleanup();
+            };
 
-                // Ensure window itself has focus (native dialogs can steal it)
-                window.focus();
+            modalCancelBtn.onclick = () => {
+                resolve(null);
+                passwordModal.style.display = 'none';
+                cleanup();
+            };
 
-                // Aggressive focus strategy
-                const forceFocus = (source) => {
-                    // console.log(`Attempting focus (${source})...`);
-                    modalInput.blur();
-                    modalInput.focus();
-                };
-
-                // 1. Immediate
-                forceFocus('immediate');
-
-                // 2. Next Frame
-                requestAnimationFrame(() => forceFocus('raf'));
-
-                // 3. Timeouts
-                setTimeout(() => forceFocus('t50'), 50);
-                setTimeout(() => forceFocus('t150'), 150);
-
-                // Electron specific handling
-                if (window.electronAPI && window.electronAPI.isElectron) {
-                    setTimeout(() => {
-                        // console.log('Electron focus enforcement');
-                        window.focus(); // Force window focus again
-                        modalInput.click(); // Simulate interaction
-                        forceFocus('electron-delayed');
-                    }, 300);
-                }
-            });
-        };
-
-        // Ensure clicking modal background refocuses input
-        passwordModal.addEventListener('click', (e) => {
-            if (e.target === passwordModal) {
+            // Focus Logic
+            window.focus();
+            setTimeout(() => {
                 modalInput.focus();
-            }
+                if (window.electronAPI) window.focus(); // Force match
+            }, 100);
         });
+    };
 
-        // Prevent duplicate listeners if init is called multiple times on same element
-        if (!factoryResetBtn.dataset.hasListener) {
-            factoryResetBtn.dataset.hasListener = 'true';
-            factoryResetBtn.addEventListener('click', async () => {
-                // First confirmation
-                if (!confirm('WARNING: Are you sure you want to perform a Factory Reset? This will DELETE ALL DATA and cannot be undone.')) {
-                    return;
-                }
-
-
-                const password = await getPassword();
-
-                if (!password) {
-                    return; // User cancelled or entered empty password
-                }
-
-                // Second confirmation (Safety check)
-                if (!confirm('Final Confirmation: All users, files, and settings will be permanently lost. The app will restart. Proceed?')) {
-                    return;
-                }
-
-                try {
-                    factoryResetBtn.disabled = true;
-                    factoryResetBtn.textContent = 'Resetting...';
-
-                    const token = localStorage.getItem('token');
-                    const response = await fetch('/api/system/factory-reset', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`
-                        },
-                        body: JSON.stringify({ password })
-                    });
-
-                    const result = await response.json();
-
-                    if (response.ok) {
-                        alert('Reset complete. The application will now restart.');
-                        // In case the backend restart prompt doesn't kill the page immediately
-                        document.body.innerHTML = '<div style="color:white;text-align:center;padding:50px;">Resetting application...</div>';
-                    } else {
-                        throw new Error(result.error || 'Reset failed');
-                    }
-
-                } catch (error) {
-                    console.error('Factory Reset Error:', error);
-                    alert('Factory reset failed: ' + error.message);
-                    factoryResetBtn.disabled = false;
-                    factoryResetBtn.textContent = 'Reset Application';
-                }
-            });
+    // Ensure clicking modal background refocuses input (or cancels?)
+    passwordModal.addEventListener('click', (e) => {
+        if (e.target === passwordModal) {
+            // Optional: click outside to cancel
+            // For now, focus input to be rigorous
+            modalInput.focus();
         }
-    }
+    });
 
+    // Factory Reset Logic
+    // Factory Reset Logic (Event Handler)
+    if (factoryResetBtn) {
+        factoryResetBtn.onclick = async () => {
+            // First confirmation
+            if (!confirm('WARNING: Are you sure you want to perform a Factory Reset? This will DELETE ALL DATA and cannot be undone.')) {
+                return;
+            }
+
+            const password = await requestPassword('Admin Password Required', 'Please enter your admin password to proceed with Factory Reset.');
+
+            if (!password) return;
+
+            // Second confirmation
+            if (!confirm('Final Confirmation: All users, files, and settings will be permanently lost. The app will restart. Proceed?')) {
+                return;
+            }
+
+            try {
+                factoryResetBtn.disabled = true;
+                factoryResetBtn.textContent = 'Resetting...';
+
+                const token = localStorage.getItem('token');
+                const response = await fetch('/api/system/factory-reset', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ password })
+                });
+
+                if (response.ok) {
+                    alert('Reset complete. The application will now restart.');
+                    document.body.innerHTML = '<div style="color:white;text-align:center;padding:50px;">Resetting application...</div>';
+                } else {
+                    const result = await response.json();
+                    throw new Error(result.error || 'Reset failed');
+                }
+
+            } catch (error) {
+                console.error('Factory Reset Error:', error);
+                alert('Factory reset failed: ' + error.message);
+                factoryResetBtn.disabled = false;
+                factoryResetBtn.textContent = 'Reset Application';
+            }
+        };
+    }
 
     // --- Vault Settings Logic ---
     const vaultStatusText = document.getElementById('vaultStatusText');
@@ -380,12 +364,8 @@ async function initSettingsPage() {
     // Initial Check
     checkVaultSettings();
 
-    // Handlers
     if (btnDisableVault) {
         btnDisableVault.onclick = async () => {
-            const password = prompt("To DISABLE the vault and DELETE ALL ENCRYPTED FILES, please enter your vault password:");
-            if (!password) return;
-
             if (!confirm("FINAL WARNING: This will permanently delete all files in your vault. This cannot be undone. Are you sure?")) return;
 
             try {
@@ -396,7 +376,7 @@ async function initSettingsPage() {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${token}`
                     },
-                    body: JSON.stringify({ password })
+                    body: JSON.stringify({}) // No password needed
                 });
 
                 if (res.ok) {
@@ -404,7 +384,7 @@ async function initSettingsPage() {
                     checkVaultSettings();
                 } else {
                     const err = await res.json();
-                    alert('Failed: ' + (err.error || 'Incorrect password'));
+                    alert('Failed: ' + (err.error || 'Unknown error'));
                 }
             } catch (e) {
                 console.error(e);
@@ -414,9 +394,90 @@ async function initSettingsPage() {
     }
 
     if (btnChangeVaultPass) {
+        // Change Password Form Logic
+        const cpModal = document.getElementById('changePasswordFormModal');
+        const cpOldPass = document.getElementById('cpOldPass');
+        const cpNewPass = document.getElementById('cpNewPass');
+        const cpConfirmPass = document.getElementById('cpConfirmPass');
+        const cpCancelBtn = document.getElementById('cpCancelBtn');
+        const cpSaveBtn = document.getElementById('cpSaveBtn');
+
         btnChangeVaultPass.onclick = () => {
-            alert('To change your password, please disable and re-enable the vault (Note: This will clear current files). Password rotation without data loss is not yet supported.');
+            if (cpModal) {
+                // Reset Fields
+                cpOldPass.value = '';
+                cpNewPass.value = '';
+                cpConfirmPass.value = '';
+                cpModal.style.display = 'flex';
+                // Focus first input
+                setTimeout(() => cpOldPass.focus(), 100);
+            }
         };
+
+        if (cpCancelBtn) {
+            cpCancelBtn.onclick = () => {
+                cpModal.style.display = 'none';
+            };
+        }
+
+        if (cpSaveBtn) {
+            cpSaveBtn.onclick = async () => {
+                const currentPassword = cpOldPass.value;
+                const newPassword = cpNewPass.value;
+                const confirmPassword = cpConfirmPass.value;
+
+                if (!currentPassword || !newPassword || !confirmPassword) {
+                    alert('Please fill in all fields.');
+                    return;
+                }
+
+                if (newPassword !== confirmPassword) {
+                    alert('New passwords do not match.');
+                    return;
+                }
+
+                if (newPassword.length < 4) {
+                    alert('New password must be at least 4 characters.');
+                    return;
+                }
+
+                try {
+                    cpSaveBtn.disabled = true;
+                    cpSaveBtn.textContent = 'Processing...';
+
+                    const token = localStorage.getItem('token');
+                    const res = await fetch('/api/vault/change-password', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ currentPassword, newPassword })
+                    });
+
+                    if (res.ok) {
+                        alert('Password changed successfully! All files have been re-encrypted.');
+                        cpModal.style.display = 'none';
+                    } else {
+                        const err = await res.json();
+                        alert('Failed: ' + (err.error || 'Unknown error'));
+                    }
+                } catch (e) {
+                    console.error(e);
+                    alert('Error changing password');
+                } finally {
+                    cpSaveBtn.disabled = false;
+                    cpSaveBtn.textContent = 'Change Password';
+                }
+            };
+        }
+
+        // Click outside to close
+        window.addEventListener('click', (e) => {
+            if (e.target === cpModal) {
+                cpModal.style.display = 'none';
+            }
+        });
     }
 
     // --- Tailscale Settings Logic ---
