@@ -36,7 +36,7 @@ class Autoencoder(nn.Module):
         return reconstructed
 
 def export():
-    input_dim = 8
+    input_dim = 14
     model_path = 'resources/hardware-monitor/health_model.pth'
     onnx_path = 'resources/hardware-monitor/health_model.onnx'
     

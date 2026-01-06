@@ -135,9 +135,10 @@ class HardwareMonitor {
 
             if (this.session) {
                 const inputData = this.normalizeData(smartTable, nvmeData, systemMetrics, deviceId);
-                // The current model expects 8 features (SMART attributes only)
-                const modelInput = inputData.slice(0, 8);
-                const tensor = new ort.Tensor('float32', modelInput, [1, 8]);
+                // The model expects 14 features
+                // const modelInput = inputData.slice(0, 8); // OLD: Sliced to 8
+                const modelInput = inputData; // Use full vector (14 dim)
+                const tensor = new ort.Tensor('float32', modelInput, [1, 14]);
                 const results = await this.session.run({ input: tensor });
                 const output = results.output.data;
 

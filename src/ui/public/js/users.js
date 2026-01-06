@@ -118,7 +118,9 @@ window.initUsersPage = function () {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const users = await response.json();
-            renderUsers(users);
+            // Filter out the current user
+            const filteredUsers = users.filter(u => u.id != user.id);
+            renderUsers(filteredUsers);
         } catch (error) {
             console.error('Error fetching users:', error);
             alert('Failed to load users');

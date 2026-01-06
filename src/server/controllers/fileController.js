@@ -367,53 +367,131 @@ class FileController {
 
                         try {
                             const keyBuffer = Buffer.from(vaultKey, 'hex');
-                            // We used AES-256-CTR. IV is usually prepended.
-                            // But wait, TransferService implementation pending.
-                            // Let's assume TransferService prepends 16 byte IV.
+                            const fileSize = fs.statSync(file.path).size;
+                            const encryptedContentSize = fileSize - 16; // First 16 bytes are IV
 
-                            // Robust IV read and Stream
-                            fs.open(file.path, 'r', (err, fd) => {
-                                if (err) return res.status(500).json({ error: 'Failed to open file' });
+                            // Determine Mime Type
+                            const mime = require('mime-types');
+                            const contentType = mime.lookup(file.name) || 'application/octet-stream';
 
-                                const ivBuffer = Buffer.alloc(16);
-                                fs.read(fd, ivBuffer, 0, 16, 0, (err, bytesRead, buffer) => {
-                                    fs.close(fd, () => { }); // Close handle
+                            // Handle Range Request
+                            const range = req.headers.range;
+                            if (range) {
+                                const parts = range.replace(/bytes=/, "").split("-");
+                                const start = parseInt(parts[0], 10);
+                                const end = parts[1] ? parseInt(parts[1], 10) : encryptedContentSize - 1;
+                                const chunksize = (end - start) + 1;
 
-                                    if (err || bytesRead !== 16) {
-                                        return res.status(500).json({ error: 'Failed to read IV or file too short' });
-                                    }
+                                const headers = {
+                                    'Content-Range': `bytes ${start}-${end}/${encryptedContentSize}`,
+                                    'Accept-Ranges': 'bytes',
+                                    'Content-Length': chunksize,
+                                    'Content-Type': contentType,
+                                };
 
-                                    const decipher = crypto.createDecipheriv('aes-256-ctr', keyBuffer, buffer);
+                                res.writeHead(206, headers);
 
-                                    // Set Headers
-                                    res.setHeader('Content-Disposition', `inline; filename="${file.name}"`);
+                                fs.open(file.path, 'r', (err, fd) => {
+                                    if (err) return console.error(err);
 
-                                    // Determine Mime Type (reuse logic from existing download or look up)
-                                    // We need to set Content-Type for images to render in browser
-                                    const mime = require('mime-types');
-                                    const contentType = mime.lookup(file.name) || 'application/octet-stream';
-                                    res.setHeader('Content-Type', contentType);
+                                    // Read IV
+                                    const ivBuffer = Buffer.alloc(16);
+                                    fs.read(fd, ivBuffer, 0, 16, 0, (err, bytesRead) => {
+                                        if (err) return console.error(err);
 
-                                    const readStream = fs.createReadStream(file.path, { start: 16 });
+                                        // We can't easily jump to middle of AES-CTR stream with Node crypto without complex counter logic,
+                                        // BUT for video streaming, usually the browser requests from 0, or seeks.
+                                        // For true seeking support, we'd need to compute the CTR counter based on 'start'.
+                                        // Counter = IV + (start / 16).
+                                        // Since JS BigInts and Buffers are fiddly and 'crypto' api expects IV not counter for createDecipheriv...
+                                        // We will try a simpler approach first: Stream from 0, and pipe to a pass-through that slices?
+                                        // No, that sends too much data.
+                                        // Let's rely on the fact that for standard playback, start is often 0 or small.
+                                        // If start > 0, we can read from start+16, but we need the correct counter state.
 
-                                    readStream.on('error', (e) => {
-                                        console.error('Stream error', e);
-                                        if (!res.headersSent) res.status(500).end();
+                                        // IMPLEMENTATION DECISION for Compatibility:
+                                        // We will calculate the counter for the block containing 'start'.
+                                        // AES block size is 16 bytes.
+                                        const blockIndex = Math.floor(start / 16);
+                                        const offsetInBlock = start % 16;
+
+                                        // New IV (Counter) logic:
+                                        // Convert IV to BigInt, add blockIndex.
+                                        // Note: IV is 128-bit (16 bytes).
+                                        const ivBigInt = BigInt('0x' + ivBuffer.toString('hex'));
+                                        const newIvBigInt = ivBigInt + BigInt(blockIndex);
+                                        let newIvHex = newIvBigInt.toString(16);
+                                        // Pad to 32 chars (16 bytes)
+                                        while (newIvHex.length < 32) newIvHex = '0' + newIvHex;
+                                        const newIvBuffer = Buffer.from(newIvHex, 'hex');
+
+                                        const decipher = crypto.createDecipheriv('aes-256-ctr', keyBuffer, newIvBuffer);
+
+                                        // We need to disable auto padding for CTR? CTR doesn't use padding.
+
+                                        // Read from file start position
+                                        const fileReadStart = 16 + (blockIndex * 16);
+                                        // We need to read enough to cover the requested range + offsetInBlock
+                                        // And we might read a bit more at the end to complete a block, but pipe handles that.
+                                        // Actually simplest is read from fileReadStart to end of file, or just enough for request.
+                                        // Let's read until end of requested range.
+                                        const fileReadEnd = 16 + end;
+
+                                        const readStream = fs.createReadStream(file.path, { start: fileReadStart, end: fileReadEnd });
+
+                                        let isFirstSelect = true;
+
+                                        // Simple Transform to strip bytes if we are inside a block (offsetInBlock > 0)
+                                        // For first chunk only.
+                                        // But wait, decipher output will correspond 1:1 with input.
+                                        // So we just update the stream.
+
+                                        const { Transform } = require('stream');
+                                        const stripOffset = new Transform({
+                                            transform(chunk, encoding, callback) {
+                                                if (isFirstSelect && offsetInBlock > 0) {
+                                                    this.push(chunk.slice(offsetInBlock));
+                                                    isFirstSelect = false;
+                                                } else {
+                                                    this.push(chunk);
+                                                }
+                                                callback();
+                                            }
+                                        });
+
+                                        readStream.pipe(decipher).pipe(stripOffset).pipe(res);
+
+                                        fs.close(fd, () => { });
                                     });
-
-                                    readStream.pipe(decipher).pipe(res);
                                 });
-                            });
+
+                            } else {
+                                // Full File Request
+                                const headers = {
+                                    'Content-Length': encryptedContentSize,
+                                    'Content-Type': contentType,
+                                };
+                                res.writeHead(200, headers);
+
+                                fs.open(file.path, 'r', (err, fd) => {
+                                    if (err) return console.error(err);
+                                    const ivBuffer = Buffer.alloc(16);
+                                    fs.read(fd, ivBuffer, 0, 16, 0, (err) => {
+                                        fs.close(fd, () => { });
+                                        if (err) return res.status(500).end();
+
+                                        const decipher = crypto.createDecipheriv('aes-256-ctr', keyBuffer, ivBuffer);
+                                        const readStream = fs.createReadStream(file.path, { start: 16 });
+                                        readStream.pipe(decipher).pipe(res);
+                                    });
+                                });
+                            }
+
                             return; // Stop execution here
                         } catch (e) {
                             console.error('Decryption Setup Error', e);
                             return res.status(500).json({ error: 'Decryption failed' });
                         }
-                        // Actually, let's use the standard flow below but wrap the stream.
-                        // But we need to handle "inline" vs "attachment" and mime types.
-                        // Let's modify the proceedDownload function.
-
-                        return; // Handled by decryption stream
                     }
 
                     const proceedDownload = () => {

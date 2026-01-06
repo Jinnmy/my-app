@@ -1257,6 +1257,11 @@ body {
     }
 
     /* Topbar Mobile Improvements */
+    .topbar {
+        padding: 0.5rem 1rem;
+    }
+
+    .topbar #adminPortDisplay,
     .topbar .storage-info,
     .topbar #userNameDisplay {
         display: none !important;

@@ -127,6 +127,13 @@
         const urlParams = new URLSearchParams(window.location.search);
         const fileId = urlParams.get('id');
         const token = localStorage.getItem('token');
+        const vaultKey = urlParams.get('vaultKey');
+
+        // Optional: Remove vaultKey from URL for visual cleanliness (security via obscurity)
+        if (vaultKey) {
+            const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?id=' + fileId;
+            window.history.replaceState({ path: newUrl }, '', newUrl);
+        }
 
         if (!token) {
             alert('You must be logged in to edit documents.');
@@ -160,8 +167,11 @@
         // Load Content
         async function loadContent() {
             try {
+                const headers = { 'Authorization': `Bearer ${token}` };
+                if (vaultKey) headers['x-vault-key'] = vaultKey;
+
                 const res = await fetch(`/api/editor/${fileId}/content`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: headers
                 });
                 if (!res.ok) throw new Error('Failed to load content');
                 const data = await res.json();
@@ -218,12 +228,15 @@
             const html = quill.root.innerHTML;
 
             try {
+                const headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                };
+                if (vaultKey) headers['x-vault-key'] = vaultKey;
+
                 const res = await fetch(`/api/editor/${fileId}/save`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
+                    headers: headers,
                     body: JSON.stringify({ html })
                 });
 

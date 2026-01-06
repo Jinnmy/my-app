@@ -964,8 +964,10 @@ function showContextMenu(x, y, id, type, name, locked, encrypted = false) {
     if (type === 'folder') {
         downloadBtn.style.display = 'none';
         if (editBtn) editBtn.style.display = 'none';
+        if (shareBtn) shareBtn.style.display = 'none';
     } else {
         downloadBtn.style.display = 'flex';
+        if (shareBtn) shareBtn.style.display = 'flex';
         // Show edit if .docx
         if (editBtn) {
             if (name.toLowerCase().endsWith('.docx')) {
@@ -1732,7 +1734,13 @@ function playVideo(fileId, fileName) {
     videoModal.style.display = 'block';
 
     const token = localStorage.getItem('token');
-    videoPlayer.src = `/api/files/download/${fileId}?token=${token}`;
+    let videoUrl = `/api/files/download/${fileId}?token=${token}`;
+
+    if (isVaultMode && vaultKey) {
+        videoUrl += `&vaultKey=${vaultKey}`;
+    }
+
+    videoPlayer.src = videoUrl;
     videoPlayer.play();
 }
 
@@ -1857,7 +1865,11 @@ function renderTransfers(transfers) {
 
 function editFile(id) {
     // Open editor in a new tab/window
-    window.open(`/editor.html?id=${id}`, '_blank');
+    let url = `/editor.html?id=${id}`;
+    if (isVaultMode && vaultKey) {
+        url += `&vaultKey=${vaultKey}`;
+    }
+    window.open(url, '_blank');
 }
 
 // --- Tooltip Logic ---
