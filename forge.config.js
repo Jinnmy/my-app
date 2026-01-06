@@ -16,8 +16,7 @@ module.exports = {
     extraResource: [
       './resources/blip',
       './resources/python',
-      './resources/setup_models.py',
-      './resources/python_env.zip'
+      './resources/setup_models.py'
     ],
   },
   rebuildConfig: {},

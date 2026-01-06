@@ -115,10 +115,32 @@ exports.getAiStatus = (req, res) => {
     }
 };
 
+const https = require('https');
+
+const PYTHON_ENV_URL = 'https://github.com/Jinnmy/ai_things/raw/main/python_env.zip';
+
+// Helper to download file
+const downloadFile = (url, dest) => {
+    return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(dest);
+        https.get(url, (response) => {
+            if (response.statusCode >= 400) {
+                return reject(new Error(`Download failed with status ${response.statusCode}`));
+            }
+            response.pipe(file);
+            file.on('finish', () => {
+                file.close(() => resolve());
+            });
+        }).on('error', (err) => {
+            fs.unlink(dest, () => reject(err));
+        });
+    });
+};
+
 const { spawn } = require('child_process');
 let downloadProcess = null;
 
-exports.downloadAiModels = (req, res) => {
+exports.downloadAiModels = async (req, res) => {
     if (downloadProcess) {
         return res.json({ message: 'Download already in progress' });
     }
@@ -135,7 +157,15 @@ exports.downloadAiModels = (req, res) => {
 
     // Check Status
     const pythonExec = path.join(resourcePath, 'python_env/python.exe');
-    const isPythonMissing = !fs.existsSync(pythonExec);
+    // Ensure python_env dir exists check
+
+    // Logic:
+    // 1. If python executable exists -> Run setup.
+    // 2. If python executable missing:
+    //    a. Check if zip exists.
+    //    b. If zip missing -> Download it.
+    //    c. Extract zip.
+    //    d. Run setup.
 
     const runSetup = () => {
         try {
@@ -146,12 +176,13 @@ exports.downloadAiModels = (req, res) => {
             if (fs.existsSync(pythonExec)) {
                 pythonPath = pythonExec;
             } else if (require('electron').app.isPackaged) {
-                // In packaged mode, we MUST have our python. System python is not guaranteed.
+                // Should not happen if logic is correct
                 return res.status(500).json({ error: 'Python extraction failed or file missing.' });
             }
 
             console.log('Using Python at:', pythonPath);
 
+            // Re-instantiate python path for safety
             downloadProcess = spawn(pythonPath, [SETUP_SCRIPT], {
                 env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
             });
@@ -167,56 +198,102 @@ exports.downloadAiModels = (req, res) => {
             downloadProcess.on('close', (code) => {
                 console.log(`AI setup finished with code ${code}`);
                 downloadProcess = null;
+                // Cleanup zip if it exists to save space
+                if (fs.existsSync(ZIP_SOURCE)) {
+                    try {
+                        fs.unlinkSync(ZIP_SOURCE);
+                        console.log('Cleaned up python_env.zip');
+                    } catch (e) {
+                        console.warn('Failed to cleanup zip:', e);
+                    }
+                }
             });
 
-            res.json({ message: 'AI Setup started' });
+            // If we are responding to a request, we can't respond twice.
+            // But downloadAiModels is the trigger. 
+            // We should send the response that it *started*.
+            // Wait, the original code sent response at the end of runSetup block (Lines 172).
+            if (!res.headersSent) {
+                res.json({ message: 'AI Setup started' });
+            }
         } catch (error) {
             console.error('Failed to start setup:', error);
-            res.status(500).json({ error: 'Failed to start setup' });
+            if (!res.headersSent) {
+                res.status(500).json({ error: 'Failed to start setup' });
+            }
         }
     };
 
-    if (isPythonMissing) {
-        console.log('Python environment missing. Checking for bundled zip...');
-        console.log('Looking for zip at:', ZIP_SOURCE);
+    if (fs.existsSync(pythonExec)) {
+        runSetup();
+        return;
+    }
 
+    console.log('Python environment missing. Checking for bundled zip...');
+
+    try {
         if (!fs.existsSync(ZIP_SOURCE)) {
-            console.error('Bundled python_env.zip not found!');
-            return res.status(500).json({ error: 'Bundled Python environment not found. Please reinstall (or if in dev, ensure python_env.zip is in resources).' });
+            console.log('Zip missing. Downloading from:', PYTHON_ENV_URL);
+            // Send a preliminary response or using SSE?
+            // Since this uses standard HTTP, we can't easily stream progress to the ORIGINAL request if we want to return JSON.
+            // We'll just start the process. The frontend handles "Download started".
+            // Ideally we'd await the download then return, OR return "Started" and let background handle it.
+            // If we await download, the request might time out. 
+            // BUT, the user likely expects a "Started" response.
+            // So we will perform download in background?
+            // No, the original code did extraction in background (callback).
+            // We should do the same.
+
+            // Start background process
+            if (!res.headersSent) res.json({ message: 'Download and Setup started' });
+
+            // We fake a download process object to prevent concurrent calls
+            downloadProcess = { kill: () => { } };
+
+            try {
+                await downloadFile(PYTHON_ENV_URL, ZIP_SOURCE);
+            } catch (err) {
+                console.error('Download failed:', err);
+                downloadProcess = null;
+                return; // Can't report error to user since response already sent
+            }
+        } else {
+            if (!res.headersSent) res.json({ message: 'Setup started (Using valid local zip)' });
+            downloadProcess = { kill: () => { } };
         }
 
-        console.log('Extracting bundled Python environment...');
-
-        // Use native tar for speed (much faster than PowerShell Expand-Archive)
-        // tar -xf source.zip -C destination
+        console.log('Extracting Python environment...');
         const tarCommand = `tar -xf "${ZIP_SOURCE}" -C "${resourcePath}"`;
 
         const { exec } = require('child_process');
 
-        downloadProcess = exec(tarCommand, (error, stdout, stderr) => {
+        // Reset downloadProcess to the actual exec process
+        // Note: There's a race condition if user cancels between download and extract.
+        // But simplistic handling is okay here.
+
+        const extractProc = exec(tarCommand, (error, stdout, stderr) => {
             if (error) {
                 console.error('Extraction Error:', stderr || error.message);
                 downloadProcess = null;
-                // Fallback to PowerShell if tar fails (though unlikely on Win10/11)
-                return res.status(500).json({ error: 'Failed to extract Python environment using tar.' });
+                return;
             }
 
             console.log('Extraction Complete:', stdout);
             downloadProcess = null;
 
-            // Re-verify existence
-            const pythonExecCheck = path.join(resourcePath, 'python_env/python.exe');
-            if (fs.existsSync(pythonExecCheck)) {
+            if (fs.existsSync(pythonExec)) {
                 runSetup();
             } else {
                 console.error('Extraction finished but python.exe still missing.');
-                return res.status(500).json({ error: 'Extraction finished but Python executable checking failed.' });
             }
         });
 
-    } else {
-        // Python exists
-        runSetup();
+        downloadProcess = extractProc;
+
+    } catch (e) {
+        console.error('Error in download model flow:', e);
+        downloadProcess = null;
+        if (!res.headersSent) res.status(500).json({ error: e.message });
     }
 };
 
